@@ -2,8 +2,8 @@
 //! power and propagates to the receiver (CNOSSOS rail). Shared by popup + heatmap.
 use crate::*;
 
-/// Memo key for `REACH_CACHE`: `(rail_type, admin ISO, speed bits, pax bits, frt bits)`.
-type ReachKey = (u8, [u8; 2], u64, u64, u64);
+/// Memo key for `REACH_CACHE`: `(rail_type, admin ISO, city_id, continent, speed bits, pax bits, frt bits)`.
+type ReachKey = (u8, [u8; 2], u16, u8, u64, u64, u64);
 
 thread_local! {
     /// Exact-key memo for `rail_reach_m` — see the comment at the call site.
@@ -94,10 +94,12 @@ pub(crate) fn compute_railways(
     // segments. Drives the C1 per-region day/evening/night split (EU freight
     // runs ~55 % at night vs ~33 % world), shared with the heatmap loader + the
     // reach solver via `railway::rail_time_dist` (exact mirror of compute_roads).
-    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
+    // M5: when source-reader installed the per-row channel (baked M3 columns),
+    // each segment's OWN admin overrides this per segment below.
+    let receiver_admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
 
-    for seg in railways {
+    for (seg_i, seg) in railways.iter().enumerate() {
         if seg.tunnel {
             continue;
         }
@@ -113,6 +115,10 @@ pub(crate) fn compute_railways(
         if q_pax + q_frt <= 0.0 {
             continue;
         }
+        // The segment's own baked admin when present (plan M5); `None` — no
+        // channel, no columns on the row's batch, or a mis-aligned channel —
+        // falls back to the receiver admin (pre-bake behaviour, unchanged).
+        let admin = railway::rail_row_admin(seg_i, railways.len()).unwrap_or(receiver_admin);
         // Per-row audibility reach: this segment's own 25 dB Lden crossing,
         // clamped [2 km, 10 km]. The heatmap loader sets the identical value on
         // each `LineRow` from the SAME `rail_reach_m` solver (the popup's
@@ -126,12 +132,15 @@ pub(crate) fn compute_railways(
         // (type, speed, counts) tuples collapse onto a handful of defaults,
         // so an exact-key cache hits ~99%.
         let reach_m = REACH_CACHE.with(|c| {
-            // admin in the key: the per-region split changes the row's Lden, so a
-            // CZ corridor and a US corridor with identical (type, speed, counts)
-            // can solve to different reaches on the same worker thread.
+            // Full admin triplet in the key: rail reach is ISO-only today, but
+            // the moment a per-country override keyed on anything else lands,
+            // an ISO-only key would serve a stale reach with no test failing
+            // (/gg M4/M5 #5). A tuple of Copy primitives costs nothing extra.
             let key = (
                 seg.rail_type,
                 admin.country_iso,
+                admin.city_id,
+                admin.continent as u8,
                 speed.to_bits(),
                 q_pax.to_bits(),
                 q_frt.to_bits(),
@@ -602,4 +611,123 @@ pub(crate) fn compute_railways(
     let le = 10.0 * total_energy[1].max(1e-12).log10();
     let ln = 10.0 * total_energy[2].max(1e-12).log10();
     (periods::periods(ld, le, ln), contributors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admin::{Admin, Continent};
+
+    /// Flat-ground rasters (200 m, G=0.5) mirroring lib.rs' MockRasters.
+    struct FlatRasters;
+    impl RasterSampler for FlatRasters {
+        fn elevation(&self, _: f64, _: f64) -> f64 {
+            200.0
+        }
+        fn building_height(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+        fn ground_g(&self, _: f64, _: f64) -> f64 {
+            0.5
+        }
+        fn building_enclosure(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+    }
+
+    const CZ: Admin = Admin {
+        continent: Continent::Europe,
+        country_iso: *b"CZ",
+        city_id: 0,
+    };
+    const TH: Admin = Admin {
+        continent: Continent::Asia,
+        country_iso: *b"TH",
+        city_id: 0,
+    };
+
+    /// Freight-heavy mainline (100 pax + 40 freight @ 120 km/h) 500 m from
+    /// the receiver — the shape the loader tests prove flips night/day under
+    /// the EU split. Tests never init the admin table → receiver UNKNOWN →
+    /// world split when the channel is unset.
+    fn mainline_segment() -> RailSegment {
+        RailSegment {
+            osm_id: 1,
+            segment_idx: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            end_lat: 50.0,
+            end_lon: 14.007,
+            length_m: 500.0,
+            rail_type: 0,
+            usage: 0,
+            maxspeed: 120,
+            trains_passenger: 100.0,
+            trains_freight: 40.0,
+            speed_kmh: 120.0,
+            track_count: 1,
+            name: String::new(),
+            rail_ref: String::new(),
+            bridge: false,
+            tunnel: false,
+            service: false,
+            highspeed: false,
+            parallel_divisor: 1,
+            speed_source: 0,
+            trains_passenger_source: 0,
+            trains_freight_source: 0,
+            source_id: 0,
+            dist_m: 500.0,
+            cp_lat: 50.0,
+            cp_lon: 14.0035,
+            fraction: 0.5,
+        }
+    }
+
+    fn receiver() -> Receiver {
+        Receiver::new(50.0, 14.0035, 200.0)
+    }
+
+    fn periods_for(segs: &[RailSegment]) -> NoisePeriods {
+        compute_railways(&receiver(), segs, &[], &FlatRasters, None).0
+    }
+
+    /// Gate (d) popup: the EU vs world period split follows the SEGMENT's
+    /// baked ISO, not the receiver's admin.
+    #[test]
+    fn baked_iso_drives_eu_split() {
+        let seg = mainline_segment();
+        crate::emission::railway::set_rail_row_admins(Some(vec![Some(CZ)]));
+        let eu = periods_for(std::slice::from_ref(&seg));
+        crate::emission::railway::set_rail_row_admins(Some(vec![Some(TH)]));
+        let world = periods_for(std::slice::from_ref(&seg));
+        crate::emission::railway::set_rail_row_admins(None);
+        assert!(
+            eu.ln_db > eu.ld_db,
+            "baked CZ: EU freight night {:.2} must exceed day {:.2}",
+            eu.ln_db,
+            eu.ld_db
+        );
+        assert!(
+            world.ld_db > world.ln_db,
+            "baked TH: world day {:.2} must exceed night {:.2}",
+            world.ld_db,
+            world.ln_db
+        );
+    }
+
+    /// Gate (b) popup rail: a channel of `None` entries ≡ no channel — the
+    /// receiver path is bit-identical to the pre-bake kernel.
+    #[test]
+    fn none_channel_is_receiver_path_bit_identical() {
+        let segs = vec![mainline_segment()];
+        let plain = periods_for(&segs);
+        crate::emission::railway::set_rail_row_admins(Some(vec![None]));
+        let channeled = periods_for(&segs);
+        crate::emission::railway::set_rail_row_admins(None);
+        assert_eq!(plain.ld_db, channeled.ld_db);
+        assert_eq!(plain.le_db, channeled.le_db);
+        assert_eq!(plain.ln_db, channeled.ln_db);
+        assert_eq!(plain.lden_db, channeled.lden_db);
+    }
 }

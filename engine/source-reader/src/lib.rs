@@ -54,6 +54,22 @@ struct HexStore {
     h3r4_dir: String,
 }
 
+/// RAII clearer for the M4/M5 per-row admin channels: a plain
+/// clear-after-compute pair lets a kernel unwind leave a stale vec on the
+/// surviving napi worker thread (the next query of equal row count would
+/// silently inherit the previous query's countries). The guard clears on
+/// scope exit either way.
+#[cfg(feature = "node")]
+struct RowAdminGuard;
+
+#[cfg(feature = "node")]
+impl Drop for RowAdminGuard {
+    fn drop(&mut self) {
+        noise_compute::defaults::set_road_row_admins(None);
+        noise_compute::emission::railway::set_rail_row_admins(None);
+    }
+}
+
 #[cfg(feature = "node")]
 impl HexStore {
     fn new() -> Self {
@@ -346,6 +362,15 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     let n_railways = sources.railways.len();
 
     let mut traces = noise_compute::types::TraceCollector::new();
+    // M4/M5: hand the per-row baked admins to the kernels through their
+    // thread-local channels (RoadSegment/RailSegment are codever-SHARED and
+    // cannot carry the field). The guard clears on scope exit INCLUDING a
+    // kernel unwind — napi-rs turns a caught panic into a JS throw, and a
+    // stale vec on the surviving worker thread would paint the previous
+    // click's countries onto the next query's segments (/gg M4/M5 #2).
+    noise_compute::defaults::set_road_row_admins(Some(sources.road_admins));
+    noise_compute::emission::railway::set_rail_row_admins(Some(sources.rail_admins));
+    let _row_admin_guard = RowAdminGuard;
     let mut result = noise_compute::compute_at_point_with_traces(
         &receiver,
         &sources.roads,
@@ -357,6 +382,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &config,
         Some(&mut traces),
     );
+    drop(_row_admin_guard);
     aircraft_v6::add_v6_aircraft_to_result(
         &mut result,
         &mut traces,

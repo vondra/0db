@@ -20,6 +20,13 @@ const INDUSTRIAL_QUERY_RADIUS_M: f64 = 5_000.0;
 pub struct PointQueryData {
     pub roads: Vec<noise_compute::types::RoadSegment>,
     pub railways: Vec<noise_compute::types::RailSegment>,
+    /// M4/M5 per-row baked admins, aligned by index with `roads`/`railways`
+    /// (`None` entries = pre-bake rows → receiver fallback). Installed into
+    /// the kernels' thread-local channels around `compute_at_point*` (see
+    /// `lib.rs::query_noise_impl`) — the segment structs are codever-SHARED
+    /// and cannot carry the field.
+    pub road_admins: Vec<Option<noise_compute::admin::Admin>>,
+    pub rail_admins: Vec<Option<noise_compute::admin::Admin>>,
     pub buildings: Vec<noise_compute::types::PointSource>,
     pub industrial: Vec<noise_compute::types::PointSource>,
     /// v6 aircraft popup arrows. Rows are consumed via typed views in
@@ -72,6 +79,8 @@ pub fn collect_from_hex_data(
 ) -> PointQueryData {
     let mut all_roads = Vec::new();
     let mut all_railways = Vec::new();
+    let mut all_road_admins = Vec::new();
+    let mut all_rail_admins = Vec::new();
     let mut all_buildings = Vec::new();
     let mut all_industrial = Vec::new();
     let mut all_barriers = Vec::new();
@@ -176,6 +185,7 @@ pub fn collect_from_hex_data(
         // counts / speed of `norm` feed `RailSegment` here; `compute_railways`
         // re-resolves the same admin for emission + reach, so this is for
         // signature consistency (and harmless if the table is uninitialised).
+        // M5: a row with baked columns overrides this with its own admin.
         let rail_admin = noise_compute::admin::admin_for_latlng(lat, lng);
         for r in railways {
             let norm = noise_compute::normalize::normalize_rail(
@@ -189,7 +199,7 @@ pub fn collect_from_hex_data(
                     trains_freight: r.trains_freight,
                     parallel_divisor: r.parallel_divisor,
                 },
-                rail_admin,
+                r.admin.unwrap_or(rail_admin),
             );
             let trains_passenger_source: u8 = if r.trains_passenger > 0 { 0 } else { 1 };
             let trains_freight_source: u8 = if r.trains_freight > 0 { 0 } else { 1 };
@@ -232,6 +242,7 @@ pub fn collect_from_hex_data(
                 cp_lon: r.cp_lon,
                 fraction: r.fraction,
             });
+            all_rail_admins.push(r.admin);
         }
 
         let road_batches =
@@ -275,6 +286,7 @@ pub fn collect_from_hex_data(
                 cp_lon: r.cp_lon,
                 fraction: r.fraction,
             });
+            all_road_admins.push(r.admin);
         }
 
         let building_batches = data
@@ -511,6 +523,8 @@ pub fn collect_from_hex_data(
     PointQueryData {
         roads: all_roads,
         railways: all_railways,
+        road_admins: all_road_admins,
+        rail_admins: all_rail_admins,
         buildings: all_buildings,
         industrial: all_industrial,
         aircraft_airborne_batches: all_airborne_batches,

@@ -82,9 +82,15 @@ pub(crate) fn compute_roads(
     // constant across segments. Uses the process-wide admin table
     // (see admin::init_admin_table at tile-painter/source-reader init).
     // Falls back to Admin::UNKNOWN → WORLD_DEFAULT when uninitialised.
-    let admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
+    // M4: when source-reader installed the per-row channel (baked M3
+    // columns), each segment's OWN admin overrides this per segment below.
+    let receiver_admin = crate::admin::admin_for_latlng(receiver.lat, receiver.lon);
 
-    for seg in roads {
+    for (seg_i, seg) in roads.iter().enumerate() {
+        // The segment's own baked admin when present (plan M4); `None` — no
+        // channel, no columns on the row's batch, or a mis-aligned channel —
+        // falls back to the receiver admin (pre-bake behaviour, unchanged).
+        let admin = defaults::road_row_admin(seg_i, roads.len()).unwrap_or(receiver_admin);
         let Some(norm) = normalize::normalize_road_segment(seg, admin) else {
             continue;
         };
@@ -639,4 +645,138 @@ pub(crate) fn compute_roads(
     let ln = 10.0 * total_energy[2].max(1e-12).log10();
 
     (periods::periods(ld, le, ln), contributors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admin::{Admin, Continent};
+
+    /// Flat-ground rasters (200 m, G=0.5) mirroring lib.rs' MockRasters.
+    struct FlatRasters;
+    impl RasterSampler for FlatRasters {
+        fn elevation(&self, _: f64, _: f64) -> f64 {
+            200.0
+        }
+        fn building_height(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+        fn ground_g(&self, _: f64, _: f64) -> f64 {
+            0.5
+        }
+        fn building_enclosure(&self, _: f64, _: f64) -> f64 {
+            0.0
+        }
+    }
+
+    /// TH admin (M6.3 measured DRR secondary arm 899.7/62.4/44.2/912.1 vs
+    /// WORLD 2640/120/180/60 — the override is unambiguous on the fixture
+    /// below).
+    const TH: Admin = Admin {
+        continent: Continent::Asia,
+        country_iso: *b"TH",
+        city_id: 0,
+    };
+
+    /// One unenriched secondary (class 3) segment 200 m from the receiver:
+    /// tagged speed 50, so the admin affects ONLY the AADT cascade. Tests
+    /// never init the process-wide admin table, so the receiver admin is
+    /// UNKNOWN → WORLD — exactly the "oceanic receiver" shape of gate (a).
+    fn secondary_segment() -> RoadSegment {
+        RoadSegment {
+            osm_id: 1,
+            segment_idx: 0,
+            start_lat: 50.0,
+            start_lon: 14.0,
+            end_lat: 50.0,
+            end_lon: 14.003,
+            length_m: 220.0,
+            road_class: 3,
+            speed_limit: 50,
+            speed_taper: 0,
+            surface_type: 0,
+            oneway: false,
+            lanes: 0,
+            aadt_light: 0,
+            aadt_medium: 0,
+            aadt_heavy: 0,
+            aadt_moto: 0,
+            source_id: 0,
+            dist_m: 200.0,
+            cp_lat: 50.0,
+            cp_lon: 14.0015,
+            fraction: 0.5,
+            name: String::new(),
+            road_ref: String::new(),
+            bridge: false,
+            tunnel: false,
+            access: 0,
+            junction: 0,
+            built_up: 0,
+        }
+    }
+
+    fn receiver() -> Receiver {
+        Receiver::new(50.0, 14.0015, 200.0)
+    }
+
+    fn one_road_meta(roads: &[RoadSegment]) -> RoadMetadata {
+        let (_periods, contribs) = compute_roads(&receiver(), roads, &[], &FlatRasters, None);
+        assert_eq!(contribs.len(), 1, "single segment → single contributor");
+        match contribs.into_iter().next().unwrap().metadata.unwrap() {
+            SourceMetadata::Road(m) => m,
+            other => panic!("expected road metadata, got {other:?}"),
+        }
+    }
+
+    /// Gate (a) popup: a row whose baked admin is TH gets TH defaults even
+    /// though the receiver resolves UNKNOWN — the segment's own country wins.
+    #[test]
+    fn baked_row_admin_wins_over_receiver() {
+        let seg = secondary_segment();
+        let world = one_road_meta(std::slice::from_ref(&seg));
+        defaults::set_road_row_admins(Some(vec![Some(TH)]));
+        let baked = one_road_meta(std::slice::from_ref(&seg));
+        defaults::set_road_row_admins(None);
+        assert_eq!(
+            world.aadt_light_effective, 2640.0,
+            "receiver UNKNOWN → WORLD"
+        );
+        assert_eq!(
+            baked.aadt_light_effective, 899.7,
+            "baked TH → the measured TH arm"
+        );
+        // The popup's nominal (pre-factor) display surface follows the same
+        // row admin (nominal_road_aadt call inside the segment loop).
+        assert_eq!(baked.aadt_light_nominal, 899.7);
+        assert_eq!(world.aadt_light_nominal, 2640.0);
+    }
+
+    /// Gate (b) popup: a channel of `None` entries ≡ no channel — the
+    /// receiver path is bit-identical to the pre-bake kernel.
+    #[test]
+    fn none_channel_is_receiver_path_bit_identical() {
+        let roads = vec![secondary_segment()];
+        let plain = compute_roads(&receiver(), &roads, &[], &FlatRasters, None).0;
+        defaults::set_road_row_admins(Some(vec![None]));
+        let channeled = compute_roads(&receiver(), &roads, &[], &FlatRasters, None).0;
+        defaults::set_road_row_admins(None);
+        assert_eq!(plain.ld_db, channeled.ld_db);
+        assert_eq!(plain.le_db, channeled.le_db);
+        assert_eq!(plain.ln_db, channeled.ln_db);
+        assert_eq!(plain.lden_db, channeled.lden_db);
+    }
+
+    /// Gate (c) popup: a baked `\0\0` row is WORLD defaults — `Some(UNKNOWN)`
+    /// never falls back to the receiver admin (indistinguishable here only
+    /// because the test receiver is also UNKNOWN; the no-fallback contrast
+    /// with a KNOWN region is pinned at the loader level).
+    #[test]
+    fn baked_zero_is_world_arm() {
+        let seg = secondary_segment();
+        defaults::set_road_row_admins(Some(vec![Some(Admin::UNKNOWN)]));
+        let baked0 = one_road_meta(std::slice::from_ref(&seg));
+        defaults::set_road_row_admins(None);
+        assert_eq!(baked0.aadt_light_effective, 2640.0);
+    }
 }

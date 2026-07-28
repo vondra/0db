@@ -7,7 +7,10 @@
 //! ```text
 //!   city default (tier-1 metro override)   e.g. São Paulo, Bangkok, NYC, ...
 //!   │   ↓ fallback
-//!   country default                        e.g. BR rural, TH rural, ...
+//!   MEASURED region default                country × class medians from national
+//!   │   (region_defaults_generated.rs)     censuses (M6.3; TH DRR 2024 today)
+//!   │   ↓ fallback
+//!   country default                        e.g. BR rural (hand-tuned), GDP-scaled
 //!   │   ↓ fallback
 //!   continent default                      e.g. SA/AF coarse averages
 //!   │   ↓ fallback
@@ -16,10 +19,11 @@
 //!
 //! `WORLD_DEFAULT` reproduces the legacy `normalize.rs::default_road_traffic`
 //! table bit-for-bit so today's non-admin call sites see no behavior change.
-//! Country and city arms are populated where the 12 national enrichers
-//! previously hard-coded tier tables — BR CLASS_AADT × metro-tier, TH DOH
-//! rural/Bangkok split, etc. Other countries will be added as enrichers get
-//! audited in Phase A.1.
+//! The measured region arm is generated from census data only
+//! (`scripts/gen-region-defaults-rs.mjs`) and SUPERSEDES a country's
+//! hand-tuned arm: the TH arm was deleted when the DRR 2024 medians landed
+//! (M6); BR's hand-tuned arm stays until a BR per-section census is wired
+//! into the pipeline (the DNIT-derived BR table is corridor-level).
 //!
 //! Data format: `Aadt = (light, medium, heavy, moto)`, all in vehicles/day
 //! both-directions total. Vehicle-class split follows the country's typical
@@ -106,9 +110,11 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
         (CITY_SAO_PAULO, 5) | (CITY_RIO, 5) => Some((1400.0, 200.0, 300.0, 100.0)), // 2k residential
 
         // ─── Bangkok — TH metro (rural × 1.5) split 60/8/7/25 ─────────────
-        // Derivation: TH rural totals (below) × 1.5, split via
+        // Derivation: the pre-M6 TH rural arm totals × 1.5, split via
         // pipeline/enrich-roads-th.ts thaiClassSplit(isBangkok=true) (live,
-        // still used by the DOH tiers there).
+        // still used by the DOH tiers there). Deliberately NOT replaced by
+        // the M6.3 measured medians: the DRR census is rural roads — it has
+        // no measured say inside the Bangkok metro.
         (CITY_BANGKOK, 0) => Some((54000.0, 7200.0, 6300.0, 22500.0)), // 90k motorway
         (CITY_BANGKOK, 1) => Some((27000.0, 3600.0, 3150.0, 11250.0)), // 45k trunk
         (CITY_BANGKOK, 2) => Some((13500.0, 1800.0, 1575.0, 5625.0)),  // 22.5k primary
@@ -120,19 +126,26 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
     }
 }
 
-// Two-layer policy:
-//   (a) Explicit arm for a country whose national road enricher publishes
-//       per-class AADT (currently BR rural + TH rural). Takes priority.
-//   (b) Data-driven fallback from `country_defaults_generated::country_scale`
+// Three-layer policy:
+//   (a) MEASURED region arm from `region_defaults_generated::region_default`
+//       — country × class medians computed from national censuses (M6.3;
+//       TH DRR 2024 rural roads tonight). A country present there has its
+//       hand-tuned arm below DELETED (superseded by measured data).
+//   (b) Hand-tuned arm for a country whose enricher publishes per-class
+//       AADT but has NO per-section measured census wired in (BR rural —
+//       DNIT-derived corridor table; TH's arm was deleted at M6).
+//   (c) Data-driven fallback from `country_defaults_generated::country_scale`
 //       — Wikipedia vehicles_per_km ratio vs DE (wiki-sourced, ~160
 //       countries), or World Bank pop_density fallback (~80 more).
 //       Clamped to [0.7, 1.3], applied to motorway/trunk/primary/link
 //       classes. Local roads (class 3-9) stay at WORLD regardless.
 //
-// Refresh via:
+// Refresh (c):
 //   node scripts/fetch-wb-country-data.mjs
 //   node scripts/fetch-wiki-roads-fleet.mjs
 //   node scripts/gen-country-defaults-rs.mjs
+// Refresh (a):
+//   node scripts/gen-region-defaults-rs.mjs
 // Empirical basis: direct fleet / paved_km is the AADT denominator
 // itself — Wikipedia gives both signals for ~160 countries so we sidestep
 // the need for a proxy. For the remaining ~80 we still use pop_density
@@ -154,7 +167,16 @@ fn is_traffic_scaled(class: u8) -> bool {
 }
 
 fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
-    // (a) Explicit data-driven arms — BR, TH rural from national enrichers.
+    // (a) MEASURED region arm — census medians, country × class (M6.3).
+    if let Some(v) = crate::region_defaults_generated::region_default(iso, class) {
+        return Some(v);
+    }
+
+    // (b) Hand-tuned arm — only where no per-section measured census is
+    // wired into the pipeline. TH's arm was deleted at M6 (superseded by
+    // the measured DRR 2024 medians above); BR stays until a BR per-section
+    // census exists in the pipeline (the DNIT-derived BR table is
+    // corridor-level, not per-section counts).
     match (iso, class) {
         // ─── Brazil rural (tier 0) — split 60/10/25/5 ────────────────────
         // Source: pipeline/enrich-roads-br.ts CLASS_AADT rural × splitVehicles(tier=0).
@@ -166,22 +188,10 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
         (b"BR", 5) => return Some((600.0, 100.0, 250.0, 50.0)),        // 1k residential
         (b"BR", 6) => return Some((240.0, 40.0, 100.0, 20.0)),         // 400 living_street
 
-        // ─── Thailand rural — split 62/10/13/15 ───────────────────────────
-        // Thai-tuned class totals (calibrated from DRR 2024 + DOH corridor
-        // data) × split from pipeline/enrich-roads-th.ts
-        // thaiClassSplit(isBangkok=false) (live there). Rural baseline;
-        // Bangkok hex overrides via CITY_BANGKOK above.
-        (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)), // 60k motorway
-        (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)), // 30k trunk
-        (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),  // 15k primary
-        (b"TH", 3) => return Some((3720.0, 600.0, 780.0, 900.0)),     // 6k secondary
-        (b"TH", 4) => return Some((1550.0, 250.0, 325.0, 375.0)),     // 2.5k tertiary
-        (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),      // 1.2k residential
-
         _ => {}
     }
 
-    // (b) WB GDP-scaled fallback from WORLD_DEFAULT.
+    // (c) WB GDP-scaled fallback from WORLD_DEFAULT.
     if !is_traffic_scaled(class) {
         // Local roads: don't scale with GDP.
         return None;
@@ -239,9 +249,10 @@ pub const BUILT_UP_RURAL: u8 = 1;
 pub const BUILT_UP_URBAN: u8 = 2;
 
 /// The country's LEGAL implicit speed for an untagged road, or None → caller uses the
-/// legacy `default_road_speed` world table. Receiver-country approximation: the admin
-/// is the receiver's/region's, not the segment's — the same accepted border
-/// approximation the AADT cascade above makes.
+/// legacy `default_road_speed` world table. The admin is the SEGMENT's own when the
+/// M3 baked columns are present (see [`baked_admin`]); on pre-bake data it is the
+/// receiver's/region's — the accepted border approximation the AADT cascade above
+/// also makes.
 pub fn resolve_speed_default(class: u8, admin: Admin, built_up: u8) -> Option<f64> {
     let row = COUNTRY_SPEEDS
         .binary_search_by(|(iso, _)| iso[..].cmp(&admin.country_iso[..]))
@@ -266,6 +277,67 @@ pub fn resolve_speed_default(class: u8, admin: Admin, built_up: u8) -> Option<f6
         _ => 0, // 5-8 local + 10-12 links: legacy table by design
     };
     (v > 0).then_some(v as f64)
+}
+
+// ── Per-segment admin (plan M4, 2026-07-28) ─────────────────────────────────
+//
+// The M3 bake (`pipeline/enrich-roads-country.ts`) stamps three all-or-none
+// columns into every `roads.arrow` / `railways.arrow`: `country_iso` (UInt16,
+// two ASCII bytes packed `iso0 | iso1<<8`, 0 = `\0\0`), `city_id` (UInt16),
+// `continent` (UInt8, mirroring `admin.rs::Continent`). When a row carries
+// them, its OWN country/city/continent drives the defaults cascade; when the
+// `country_iso` COLUMN is absent (pre-bake data) the caller falls back to
+// today's receiver/region admin. A PRESENT 0 bakes `Admin::UNKNOWN` → WORLD
+// defaults with NO receiver fallback.
+
+/// Decode one row's baked admin triplet. The `country_iso` column's PRESENCE
+/// is the fallback switch (handled by callers); this only decodes a present
+/// row value. Rail keeps an exact copy in `emission::railway` — the two live
+/// in separate layer-codever buckets, so neither may import from the other.
+pub fn baked_admin(country_iso: u16, city_id: u16, continent: u8) -> Admin {
+    if country_iso == 0 {
+        return Admin::UNKNOWN;
+    }
+    Admin {
+        continent: Continent::from_u8(continent),
+        country_iso: country_iso.to_le_bytes(),
+        city_id,
+    }
+}
+
+thread_local! {
+    /// Per-row road admins for the popup kernel, aligned by index with the
+    /// `&[RoadSegment]` slice handed to `compute_at_point*`. `RoadSegment`
+    /// (`types/inputs.rs`) is codever-SHARED and cannot grow a field, so the
+    /// admins ride this thread-local: source-reader installs them right
+    /// before the compute call and clears them right after; every other
+    /// caller (parity bins, tests) leaves the channel unset and gets today's
+    /// receiver-admin behaviour bit-for-bit. `None` entries mark rows whose
+    /// batch carried no baked columns (receiver fallback); `Some(Admin::
+    /// UNKNOWN)` is a baked `\0\0` — WORLD defaults, no fallback.
+    static ROAD_ROW_ADMINS: std::cell::RefCell<Option<Vec<Option<Admin>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Install (`Some`) or clear (`None`) the per-row road-admin channel for the
+/// next `compute_roads` call on THIS thread. Popup-only — see above.
+pub fn set_road_row_admins(admins: Option<Vec<Option<Admin>>>) {
+    ROAD_ROW_ADMINS.with(|c| *c.borrow_mut() = admins);
+}
+
+/// Row `i`'s baked admin, or `None` for the receiver-admin fallback. Also
+/// `None` when the channel is unset or its length disagrees with `len`
+/// (defensive: a mis-aligned channel must not mis-assign countries — the
+/// tolerant rollout falls back, never guesses).
+pub(crate) fn road_row_admin(i: usize, len: usize) -> Option<Admin> {
+    ROAD_ROW_ADMINS.with(|c| {
+        let guard = c.borrow();
+        let v = guard.as_ref()?;
+        if v.len() != len {
+            return None;
+        }
+        v[i]
+    })
 }
 
 #[cfg(test)]
@@ -343,15 +415,47 @@ mod tests {
     }
 
     #[test]
-    fn thailand_rural_motorway_is_60k() {
+    fn thailand_secondary_is_drr_measured_median() {
+        // M6.3 measured region arm: TH secondary = the MEDIAN of 3,158
+        // measured DRR 2024 rural sections (road_code 1xxx–5xxx): median
+        // AADT 1,919 × median class shares 43.6/3.0/2.1/44.2 (moto-heavy —
+        // the hand-tuned 62/10/13/15 split under-counted moto 3×).
+        // Expected values come from `scripts/gen-region-defaults-rs.mjs`
+        // output — recompute from the DRR data, never hand-pick.
+        let a = admin_for(b"TH", 0, Continent::Asia);
+        assert_eq!(resolve_traffic_default(3, a), (899.7, 62.4, 44.2, 912.1));
+    }
+
+    #[test]
+    fn thailand_tertiary_is_drr_measured_median() {
+        // M6.3: TH tertiary = median of 106 measured DRR 2024 minor rural
+        // sections (road_code 6xxx–7xxx): median AADT 1,006 × median shares
+        // 34.7/1.8/1.8/50.7.
+        let a = admin_for(b"TH", 0, Continent::Asia);
+        assert_eq!(resolve_traffic_default(4, a), (392.5, 20.5, 19.8, 572.7));
+    }
+
+    #[test]
+    fn thailand_motorway_falls_through_to_density_scale() {
+        // M6.3 deleted the hand-tuned TH motorway arm (no per-section
+        // motorway census exists — the DRR census is rural roads only), so
+        // TH motorway now resolves via the WB density fallback:
+        // WORLD_DEFAULT 30,000 × 1.252 (density 140.4/km²) ≈ 37.56k.
         let a = admin_for(b"TH", 0, Continent::Asia);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         let total = l + m + h + x;
         assert!(
-            (total - 60000.0).abs() < 1.0,
-            "TH rural motorway total should be 60k, got {}",
+            (total - 37560.0).abs() < 1.0,
+            "TH motorway ≈ 37.56k (density scale 1.252), got {}",
             total
         );
+    }
+
+    #[test]
+    fn thailand_residential_falls_through_to_world() {
+        // No measured residential arm and class 5 is not GDP-scaled → WORLD.
+        let a = admin_for(b"TH", 0, Continent::Asia);
+        assert_eq!(resolve_traffic_default(5, a), WORLD_DEFAULT[5]);
     }
 
     #[test]
@@ -556,5 +660,38 @@ mod tests {
         let a = admin_for(b"BR", 0, Continent::SouthAmerica);
         let (l, m, h, x) = resolve_traffic_default(0, a);
         assert!((l + m + h + x - 50000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn baked_admin_decodes_m3_triplet() {
+        // Schema authority: pipeline/enrich-roads-country.ts — `iso0 | iso1<<8`,
+        // continent ids mirror admin.rs::Continent (4 = Asia).
+        let th = baked_admin(u16::from_le_bytes(*b"TH"), 0, 4);
+        assert_eq!(th.country_code(), Some("TH"));
+        assert_eq!(th.continent, Continent::Asia);
+        assert_eq!(th.city_id, 0);
+        // A present 0 (`\0\0`) is Admin::UNKNOWN — WORLD defaults, NO receiver
+        // fallback (the fallback switch is the column's ABSENCE, per plan §1).
+        assert_eq!(baked_admin(0, 0, 0), Admin::UNKNOWN);
+        // City id rides along (Bangkok metro, gated by the resolved country).
+        let bkk = baked_admin(u16::from_le_bytes(*b"TH"), CITY_BANGKOK, 4);
+        assert_eq!(bkk.city_id, CITY_BANGKOK);
+    }
+
+    #[test]
+    fn road_row_admin_channel_alignment_and_fallback() {
+        // Unset channel → every row falls back (receiver admin at the caller).
+        assert_eq!(road_row_admin(0, 1), None);
+        set_road_row_admins(Some(vec![None, Some(Admin::UNKNOWN)]));
+        assert_eq!(road_row_admin(0, 2), None, "no baked columns → fallback");
+        assert_eq!(
+            road_row_admin(1, 2),
+            Some(Admin::UNKNOWN),
+            "baked \\0\\0 → UNKNOWN, no fallback"
+        );
+        // A mis-aligned channel must not mis-assign countries — fall back.
+        assert_eq!(road_row_admin(0, 3), None, "length mismatch → fallback");
+        set_road_row_admins(None);
+        assert_eq!(road_row_admin(1, 2), None, "cleared channel → fallback");
     }
 }

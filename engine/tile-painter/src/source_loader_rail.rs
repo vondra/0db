@@ -15,8 +15,11 @@
 //! noise) and segments whose scaled train count is zero — so the scatter
 //! kernel never sees a segment that contributes nothing. `admin` drives the C1
 //! per-region day/evening/night split (EU freight runs ~55 % at night vs ~33 %
-//! world); the popup resolves it per receiver, the heatmap once per region
-//! (uniform within a ~75 km region except border cells), exactly like road.
+//! world); the popup resolves it per receiver, the heatmap once per region.
+//! Rows carrying the M3 baked triplet (`country_iso`/`city_id`/`continent`)
+//! override it PER SEGMENT — the row's own ISO drives the EU/world split and
+//! the reach solver (plan M5); only a batch WITHOUT the `country_iso` column
+//! falls back to the region admin (pre-bake arrows, byte-identical to before).
 
 use std::path::Path;
 
@@ -35,8 +38,8 @@ pub struct RailData {
 
 impl RailData {
     /// Load + normalise every `railways.arrow` row across `r4_hexes`. `admin` is
-    /// the region's admin (for the C1 per-region period split). Missing files
-    /// are skipped (R4s with no railways).
+    /// the region's admin — the C1 period-split fallback for rows whose batch
+    /// carries no baked triplet. Missing files are skipped (R4s with no railways).
     pub fn load_for_r4s(h3r4_dir: &Path, r4_hexes: &[u64], admin: Admin) -> Result<Self> {
         let mut rows = Vec::new();
         for &r4 in r4_hexes {
@@ -55,7 +58,7 @@ impl RailData {
     }
 }
 
-fn absorb_batch(batch: &RecordBatch, admin: Admin, out: &mut Vec<LineRow>) -> Result<()> {
+fn absorb_batch(batch: &RecordBatch, region_admin: Admin, out: &mut Vec<LineRow>) -> Result<()> {
     let n = batch.num_rows();
     if n == 0 {
         return Ok(());
@@ -83,12 +86,30 @@ fn absorb_batch(batch: &RecordBatch, admin: Admin, out: &mut Vec<LineRow>) -> Re
     let par_div = opt::<UInt8Array>(batch, "parallel_divisor");
     let bridge = opt::<BooleanArray>(batch, "bridge");
     let tunnel = opt::<BooleanArray>(batch, "tunnel");
+    // M3 baked admin triplet (all-or-none at bake time). The `country_iso`
+    // column's PRESENCE is the fallback switch: a present 0 bakes
+    // `Admin::UNKNOWN` (world split, NO region fallback); only an ABSENT
+    // column takes the region admin. Rail's regional behaviour depends only
+    // on the ISO (`rail_time_dist`), so no per-tuple cache is needed.
+    let country_iso = opt::<UInt16Array>(batch, "country_iso");
+    let city_id = opt::<UInt16Array>(batch, "city_id");
+    let continent = opt::<UInt8Array>(batch, "continent");
 
     for i in 0..n {
         // Tunnels emit no outdoor noise — the popup skips them in compute.
         if tunnel.map(|a| a.value(i)).unwrap_or(false) {
             continue;
         }
+        // The row's own baked admin when the column is present, else the
+        // region admin (pre-bake arrows).
+        let admin = match country_iso {
+            Some(iso_col) => noise_compute::emission::railway::baked_admin(
+                iso_col.value(i),
+                city_id.map(|c| c.value(i)).unwrap_or(0),
+                continent.map(|c| c.value(i)).unwrap_or(0),
+            ),
+            None => region_admin,
+        };
         let norm = normalize_rail(
             RawRailInput {
                 rail_type: rail_type.map(|a| a.value(i)).unwrap_or(0),
@@ -397,6 +418,97 @@ mod tests {
         assert!(
             (ratio - 0.5).abs() < 0.02,
             "divisor-2 ≈ half divisor-1, got {ratio:.3}"
+        );
+    }
+
+    // ── M5 per-segment admin gates ──────────────────────────────────────────
+
+    /// TH (non-EU) admin: the row must take the WORLD split even when the
+    /// region is CZ (EU) — the segment's own ISO decides (plan M5).
+    const TH: Admin = Admin {
+        continent: Continent::Asia,
+        country_iso: *b"TH",
+        city_id: 0,
+    };
+
+    /// The mainline fixture (100 pax + 40 freight @ 120 km/h) with the M3
+    /// baked triplet appended as `(packed_iso, city_id, continent)`.
+    fn rail_batch_with_triplet(triplet: (u16, u16, u8)) -> RecordBatch {
+        let (iso, city, cont) = triplet;
+        let mut cols = base_cols(1, false);
+        cols.push((
+            Field::new("country_iso", DataType::UInt16, false),
+            Arc::new(UInt16Array::from(vec![iso])),
+        ));
+        cols.push((
+            Field::new("city_id", DataType::UInt16, false),
+            Arc::new(UInt16Array::from(vec![city])),
+        ));
+        cols.push((
+            Field::new("continent", DataType::UInt8, false),
+            Arc::new(UInt8Array::from(vec![cont])),
+        ));
+        let fields: Vec<Field> = cols.iter().map(|(f, _)| f.clone()).collect();
+        let arrs: Vec<ArrayRef> = cols.into_iter().map(|(_, a)| a).collect();
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrs).unwrap()
+    }
+
+    /// Gate (d): the EU vs non-EU period split follows the SEGMENT's ISO, not
+    /// the region's. The fixture is the freight-heavy mainline of
+    /// `loads_and_precomputes_positive_emission` (night > day under the EU
+    /// split, day > night under the world split).
+    #[test]
+    fn baked_iso_drives_eu_split() {
+        let sum = |b: &[f32; NUM_BANDS]| b.iter().sum::<f32>();
+        let cz_triplet = (u16::from_le_bytes(*b"CZ"), 0, Continent::Europe as u8);
+        let th_triplet = (u16::from_le_bytes(*b"TH"), 0, Continent::Asia as u8);
+
+        // Baked CZ at a TH (non-EU) region → EU split: night beats day.
+        let mut rows = Vec::new();
+        absorb_batch(&rail_batch_with_triplet(cz_triplet), TH, &mut rows).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            sum(&rows[0].emission_lin[2]) > sum(&rows[0].emission_lin[0]),
+            "baked CZ: EU night Leq {} must exceed day {}",
+            sum(&rows[0].emission_lin[2]),
+            sum(&rows[0].emission_lin[0]),
+        );
+        // The reach solver follows the same row admin.
+        let expect = noise_compute::emission::railway::rail_reach_m(
+            CZ,
+            noise_compute::emission::railway::RailType::Rail,
+            120.0,
+            100.0,
+            40.0,
+        );
+        assert_eq!(
+            rows[0].max_distance_m, expect,
+            "reach follows the row's ISO"
+        );
+
+        // Baked TH at a CZ (EU) region → WORLD split: day beats night.
+        let mut rows = Vec::new();
+        absorb_batch(&rail_batch_with_triplet(th_triplet), CZ, &mut rows).unwrap();
+        assert!(
+            sum(&rows[0].emission_lin[0]) > sum(&rows[0].emission_lin[2]),
+            "baked TH at CZ region: world day Leq {} must exceed night {}",
+            sum(&rows[0].emission_lin[0]),
+            sum(&rows[0].emission_lin[2]),
+        );
+    }
+
+    /// Gate (c) rail: a PRESENT 0 (`\0\0`) bakes `Admin::UNKNOWN` → the world
+    /// split — the row must NOT inherit the region's EU arm.
+    #[test]
+    fn present_zero_bakes_world_split_not_region() {
+        let sum = |b: &[f32; NUM_BANDS]| b.iter().sum::<f32>();
+        let mut rows = Vec::new();
+        absorb_batch(&rail_batch_with_triplet((0, 0, 0)), CZ, &mut rows).unwrap();
+        assert!(
+            sum(&rows[0].emission_lin[0]) > sum(&rows[0].emission_lin[2]),
+            "present 0 at CZ region: world day Leq {} must exceed night {}",
+            sum(&rows[0].emission_lin[0]),
+            sum(&rows[0].emission_lin[2]),
         );
     }
 }

@@ -397,6 +397,12 @@ pub struct RoadResult {
     pub cp_lat: f64,
     pub cp_lon: f64,
     pub fraction: f64,
+    /// M4: the row's own baked admin when its batch carried the M3 triplet
+    /// (`None` = no columns → receiver-admin fallback in the kernel). Engine
+    /// side-channel — never on the wire (`RoadSegment` is codever-SHARED and
+    /// cannot carry it, so `query.rs` aligns these with the segment vec).
+    #[serde(skip_serializing)]
+    pub admin: Option<noise_compute::admin::Admin>,
 }
 
 /// Scan road batches, filter by distance, return results.
@@ -447,6 +453,14 @@ pub fn query_roads_from_batches(
         // Single `source_id` column; provenance via
         // `noise_compute::sources::provenance_of(source_id)`.
         let source_id_col = col_u16(batch, "source_id");
+        // M3 baked admin triplet (all-or-none at bake time). The `country_iso`
+        // column's PRESENCE is the fallback switch: a present 0 bakes
+        // `Admin::UNKNOWN` (WORLD defaults, NO receiver fallback); only an
+        // ABSENT column takes the receiver admin. Tolerant reads — a
+        // wrong-typed column reads as absent (the bake hard-fails instead).
+        let country_iso_col = col_u16(batch, "country_iso");
+        let city_id_col = col_u16(batch, "city_id");
+        let continent_col = col_u8(batch, "continent");
 
         // All required columns must be present
         let (Some(osm_id), Some(slat), Some(slon), Some(elat), Some(elon)) =
@@ -478,6 +492,15 @@ pub fn query_roads_from_batches(
             }
 
             let source_id = source_id_col.map(|a| a.value(i)).unwrap_or(0);
+            // The row's own baked admin when the column is present (M4), else
+            // `None` → the receiver admin (pre-bake behaviour, unchanged).
+            let row_admin = country_iso_col.map(|iso| {
+                noise_compute::defaults::baked_admin(
+                    iso.value(i),
+                    city_id_col.map(|c| c.value(i)).unwrap_or(0),
+                    continent_col.map(|c| c.value(i)).unwrap_or(0),
+                )
+            });
             let raw = noise_compute::normalize::RawRoadInput {
                 road_class: rclass.map(|a| a.value(i)).unwrap_or(0),
                 speed_limit: speed.map(|a| a.value(i)).unwrap_or(0),
@@ -495,7 +518,9 @@ pub fn query_roads_from_batches(
                 junction: junction_col.map(|a| a.value(i)).unwrap_or(0),
                 built_up: built_up_col.map(|a| a.value(i)).unwrap_or(0),
             };
-            let Some(norm) = noise_compute::normalize::normalize_road(raw, admin) else {
+            let Some(norm) =
+                noise_compute::normalize::normalize_road(raw, row_admin.unwrap_or(admin))
+            else {
                 continue;
             };
             let effective_radius = max_radius.min(norm.max_distance_m);
@@ -541,6 +566,7 @@ pub fn query_roads_from_batches(
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,
                 fraction: cp.fraction,
+                admin: row_admin,
             });
         }
     }
@@ -592,6 +618,11 @@ pub struct RailResult {
     pub cp_lat: f64,
     pub cp_lon: f64,
     pub fraction: f64,
+    /// M5: the row's own baked admin when its batch carried the M3 triplet
+    /// (`None` = no columns → receiver-admin fallback in the kernel). Engine
+    /// side-channel — never on the wire (see `RoadResult::admin`).
+    #[serde(skip_serializing)]
+    pub admin: Option<noise_compute::admin::Admin>,
 }
 
 pub fn query_railways_from_batches(
@@ -631,6 +662,11 @@ pub fn query_railways_from_batches(
         let trains_frt = col_i32(batch, "trains_freight");
         let par_div = col_u8(batch, "parallel_divisor");
         let source_id_col = col_u16(batch, "source_id");
+        // M3 baked admin triplet — the rail mirror of the road reads above
+        // (M5: the row's own ISO drives the kernel's EU/world split).
+        let country_iso_col = col_u16(batch, "country_iso");
+        let city_id_col = col_u16(batch, "city_id");
+        let continent_col = col_u8(batch, "continent");
 
         for i in 0..n {
             let s_lat = slat.value(i);
@@ -679,6 +715,13 @@ pub fn query_railways_from_batches(
                 cp_lat: cp.lat,
                 cp_lon: cp.lon,
                 fraction: cp.fraction,
+                admin: country_iso_col.map(|iso| {
+                    noise_compute::emission::railway::baked_admin(
+                        iso.value(i),
+                        city_id_col.map(|c| c.value(i)).unwrap_or(0),
+                        continent_col.map(|c| c.value(i)).unwrap_or(0),
+                    )
+                }),
             });
         }
     }
@@ -1123,5 +1166,146 @@ mod synth_load_tests {
         assert_eq!(col_u16_or_u8(&new, "maxspeed").unwrap().value(0), 300);
         assert_eq!(col_u16_or_u8(&legacy, "maxspeed").unwrap().value(0), 120);
         assert!(col_u16_or_u8(&new, "missing").is_none());
+    }
+}
+
+/// M4/M5 read-side gates: the baked M3 triplet (`country_iso`/`city_id`/
+/// `continent`) surfaces as the row's own admin on the query results; an
+/// absent column yields `None` (receiver fallback in the kernel).
+#[cfg(test)]
+mod baked_admin_tests {
+    use super::*;
+    use arrow::datatypes::{Field, Schema};
+    use noise_compute::admin::{Admin, Continent};
+    use std::sync::Arc;
+
+    const TH: Admin = Admin {
+        continent: Continent::Asia,
+        country_iso: *b"TH",
+        city_id: 0,
+    };
+    const CZ: Admin = Admin {
+        continent: Continent::Europe,
+        country_iso: *b"CZ",
+        city_id: 0,
+    };
+
+    fn append_triplet(
+        mut cols: Vec<(&'static str, ArrayRef)>,
+        triplet: Option<(u16, u16, u8)>,
+    ) -> RecordBatch {
+        if let Some((iso, city, cont)) = triplet {
+            cols.push(("country_iso", Arc::new(UInt16Array::from(vec![iso]))));
+            cols.push(("city_id", Arc::new(UInt16Array::from(vec![city]))));
+            cols.push(("continent", Arc::new(UInt8Array::from(vec![cont]))));
+        }
+        let fields: Vec<Field> = cols
+            .iter()
+            .map(|(n, a)| Field::new(*n, a.data_type().clone(), false))
+            .collect();
+        let arrs: Vec<ArrayRef> = cols.into_iter().map(|(_, a)| a).collect();
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), arrs).unwrap()
+    }
+
+    fn road_batch(triplet: Option<(u16, u16, u8)>) -> RecordBatch {
+        append_triplet(
+            vec![
+                ("osm_id", Arc::new(Int64Array::from(vec![1i64]))),
+                ("start_lat", Arc::new(Float64Array::from(vec![50.0]))),
+                ("start_lon", Arc::new(Float64Array::from(vec![14.0]))),
+                ("end_lat", Arc::new(Float64Array::from(vec![50.0]))),
+                ("end_lon", Arc::new(Float64Array::from(vec![14.002]))),
+                ("road_class", Arc::new(UInt8Array::from(vec![3u8]))),
+                ("speed_limit", Arc::new(UInt8Array::from(vec![50u8]))),
+            ],
+            triplet,
+        )
+    }
+
+    fn rail_batch(triplet: Option<(u16, u16, u8)>) -> RecordBatch {
+        append_triplet(
+            vec![
+                ("osm_id", Arc::new(Int64Array::from(vec![1i64]))),
+                ("start_lat", Arc::new(Float64Array::from(vec![50.0]))),
+                ("start_lon", Arc::new(Float64Array::from(vec![14.0]))),
+                ("end_lat", Arc::new(Float64Array::from(vec![50.0]))),
+                ("end_lon", Arc::new(Float64Array::from(vec![14.002]))),
+                ("rail_type", Arc::new(UInt8Array::from(vec![0u8]))),
+                ("maxspeed", Arc::new(UInt16Array::from(vec![120u16]))),
+                ("trains_passenger", Arc::new(Int32Array::from(vec![100i32]))),
+                ("trains_freight", Arc::new(Int32Array::from(vec![40i32]))),
+            ],
+            triplet,
+        )
+    }
+
+    #[test]
+    fn road_row_carries_baked_admin_or_none_when_absent() {
+        let baked = query_roads_from_batches(
+            &[road_batch(Some((
+                u16::from_le_bytes(*b"TH"),
+                0,
+                Continent::Asia as u8,
+            )))],
+            50.0,
+            14.001,
+            10_000.0,
+        );
+        assert_eq!(baked.len(), 1);
+        assert_eq!(baked[0].admin, Some(TH), "baked TH row → its own admin");
+
+        let plain = query_roads_from_batches(&[road_batch(None)], 50.0, 14.001, 10_000.0);
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].admin, None, "no triplet → receiver fallback");
+
+        let zero = query_roads_from_batches(&[road_batch(Some((0, 0, 0)))], 50.0, 14.001, 10_000.0);
+        assert_eq!(
+            zero[0].admin,
+            Some(Admin::UNKNOWN),
+            "present \\0\\0 → UNKNOWN, never a receiver fallback"
+        );
+    }
+
+    #[test]
+    fn rail_row_carries_baked_admin_or_none_when_absent() {
+        let baked = query_railways_from_batches(
+            &[rail_batch(Some((
+                u16::from_le_bytes(*b"CZ"),
+                0,
+                Continent::Europe as u8,
+            )))],
+            50.0,
+            14.001,
+            10_000.0,
+        );
+        assert_eq!(baked.len(), 1);
+        assert_eq!(baked[0].admin, Some(CZ));
+
+        let plain = query_railways_from_batches(&[rail_batch(None)], 50.0, 14.001, 10_000.0);
+        assert_eq!(plain[0].admin, None);
+    }
+
+    /// The admin is an engine side-channel only — the popup wire JSON
+    /// (`query_roads`) must stay byte-shaped as before.
+    #[test]
+    fn admin_field_never_serializes() {
+        let r = query_roads_from_batches(
+            &[road_batch(Some((
+                u16::from_le_bytes(*b"TH"),
+                0,
+                Continent::Asia as u8,
+            )))],
+            50.0,
+            14.001,
+            10_000.0,
+        )
+        .into_iter()
+        .next()
+        .unwrap();
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(
+            v.get("admin").is_none(),
+            "wire JSON must not grow an admin key: {v}"
+        );
     }
 }
