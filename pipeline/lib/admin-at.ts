@@ -200,6 +200,18 @@ function claimantPart(lat: number, lon: number): Part | null {
   return null
 }
 
+/** The claiming part's CGAZ shapeGroup (ISO3, or the numeric code of a
+ *  disputed area), or null over sea. Strict land membership only — no
+ *  coastal fallback; used by the bake invariant (enrich-roads-country.ts)
+ *  which needs the "is this even land?" verdict independent of `adminAt`'s
+ *  policy layer. */
+export function claimantShapeGroup(lat: number, lon: number): string | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90) return null
+  const wrappedLon = ((((lon + 180) % 360) + 360) % 360) - 180
+  const hit = claimantPart(lat, wrappedLon)
+  return hit ? hit.iso3 : null
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 export interface AdminAtResult {

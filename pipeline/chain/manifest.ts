@@ -17,6 +17,9 @@
 //!                   it for ramp targets. Runs first so every later road pass
 //!                   sees it. (osm-to-h3r4.sh tail also runs it when
 //!                   RUN_SERVICE_TREE=1 — the re-run is a byte-identical no-op.)
+//!                   enrich-roads-country — the M3 per-segment
+//!                   country_iso/city_id/continent bake into roads+railways;
+//!                   also chain-only, also run by the osm-to-h3r4.sh tail.
 //!   global-priors   rail country-bleed PRE-heal (BEFORE any rail claimer — a
 //!                   post-claimer heal can only retract, leaving freed rows
 //!                   unclaimed until the NEXT run; /gg Codex CRITICAL), then
@@ -354,6 +357,22 @@ export function buildPlan(scope: ResolvedScope): { steps: PlanStep[]; excludedBy
       country: null,
       notes:
         'built_up (u8 rural/urban) has NO extractor parent — first step always, engine + taper consume it. Fails loud when the building raster set is absent. Idempotent: re-run over an osm-to-h3r4.sh-tail run is byte-identical.',
+      skipReason: null,
+      // The osm-to-h3r4.sh tail (RUN_SERVICE_TREE=1) already ran it on a fresh
+      // extract — --assume-fresh-extract skips the byte-identical re-run.
+      skipIf: 'ran-by-extract-tail',
+    },
+    (b) => (b ? ['--bbox', serializeBbox(b)] : []),
+  )
+  pushPerBbox(
+    {
+      id: 'roads-country',
+      script: 'enrich-roads-country.ts',
+      phase: 'column-parents',
+      layer: 'all',
+      country: null,
+      notes:
+        'M3 bake: per-segment country_iso/city_id/continent into roads.arrow AND railways.arrow (AdminAt midpoint resolution; all-or-none triplet + country_baked_v1 contract stamp, column-presence read-back assertion). FATAL when a file\'s claimed-land rows resolve 100% UNKNOWN (the G1 trap — file left unwritten). Needs the CGAZ caches — osm-to-h3r4.sh warms them before its tail run; a cold manual run derives them on demand (curl + GDAL). Idempotent: byte-identical re-runs.',
       skipReason: null,
       // The osm-to-h3r4.sh tail (RUN_SERVICE_TREE=1) already ran it on a fresh
       // extract — --assume-fresh-extract skips the byte-identical re-run.

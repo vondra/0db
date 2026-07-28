@@ -125,7 +125,8 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
     SVC_JOBS="${SVC_JOBS:-$(nproc)}"
     SVC_LOG_DIR="$SCRATCH_ROOT/svc-tree-logs"
     BUP_LOG_DIR="$SCRATCH_ROOT/built-up-logs"
-    export SVC_SHARDS SVC_LOG_DIR BUP_LOG_DIR YEAR
+    CTRY_LOG_DIR="$SCRATCH_ROOT/country-bake-logs"
+    export SVC_SHARDS SVC_LOG_DIR BUP_LOG_DIR CTRY_LOG_DIR YEAR
 
     # built_up flag (urban/rural from the building raster, task #15) BEFORE
     # service-tree — order between the two is irrelevant for correctness (this
@@ -164,6 +165,39 @@ if [ "$RUN_SERVICE_TREE" = "1" ]; then
         cd "$PROJECT_DIR/pipeline"
         node_modules/.bin/tsx prepare-country-polygon-caches.ts
     ) 2>&1 | while IFS= read -r line; do log "  $line"; done
+
+    # Per-segment country/city/continent bake (plan M3) AFTER the CGAZ warm —
+    # AdminAt needs the caches. Writes country_iso/city_id/continent into
+    # roads.arrow AND railways.arrow with the country_baked_v1 contract stamp;
+    # independent of built-up/service-tree (different columns). Same per-hex
+    # SHARD parallelism; idempotent byte-identical re-runs.
+    log ""
+    log "Running per-segment country bake ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
+    rm -rf "$CTRY_LOG_DIR"; mkdir -p "$CTRY_LOG_DIR"
+    (
+        cd "$PROJECT_DIR/pipeline"
+        seq 0 $((SVC_SHARDS - 1)) | xargs -P "$SVC_JOBS" -I{} bash -c \
+            'SHARD="$1/$SVC_SHARDS" DATA_YEAR="$YEAR" node_modules/.bin/tsx enrich-roads-country.ts > "$CTRY_LOG_DIR/shard-$1.log" 2>&1' _ {}
+    ) || true
+    # Same completion gate as built-up/service-tree ("=== Results" = the shard
+    # finished) PLUS a FATAL-line check: the bake exits nonzero when a hex's
+    # on-land rows resolve 100% UNKNOWN (the G1 trap — resolver silently dead
+    # for that hex), and a baked UNKNOWN world must never ship silently.
+    set +e
+    ctry_done=$(grep -lF "=== Results" "$CTRY_LOG_DIR"/shard-*.log 2>/dev/null | wc -l)
+    ctry_fatal=$(grep -lF "FATAL:" "$CTRY_LOG_DIR"/shard-*.log 2>/dev/null | wc -l)
+    ctry_stats=$(grep -h "^  roads: " "$CTRY_LOG_DIR"/shard-*.log 2>/dev/null | \
+        awk '{for(i=2;i<=NF;i++){split($i,a,"=");s[a[1]]+=a[2]}} END {printf "rows=%d resolved=%d unknown_on_land=%d disputed=%d offshore=%d metro=%d", s["rows"], s["resolved"], s["unknown_on_land"], s["disputed"], s["offshore"], s["metro"]}')
+    set -e
+    log "  country-bake roads: ${ctry_stats:-no output}, $ctry_done/$SVC_SHARDS shards completed"
+    if [ "$ctry_done" -ne "$SVC_SHARDS" ] || [ "$ctry_fatal" -gt 0 ]; then
+        # FATAL, not a warning (same reasoning as built-up above): partial or
+        # 100%-UNKNOWN bakes silently degrade per-segment admin resolution for
+        # whole regions — re-running this script is idempotent, so failing hard
+        # costs nothing.
+        log "  FATAL: $((SVC_SHARDS - ctry_done)) country-bake shard(s) did NOT complete and $ctry_fatal shard(s) hit the on-land-UNKNOWN invariant — see $CTRY_LOG_DIR"
+        exit 1
+    fi
 
     log ""
     log "Running service-tree road enrichment ($SVC_SHARDS shards x $SVC_JOBS jobs) ..."
