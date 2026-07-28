@@ -111,12 +111,19 @@ function loadThDrr() {
 }
 
 const CENSUSES = [
-  {
-    iso: 'TH',
-    name: 'DRR Rural Roads AADT 2024 (กรมทางหลวงชนบท, MOT CKAN mirror)',
-    url: 'https://datagov.mot.go.th/datastore/dump/d0675c68-510b-45e1-b865-1ce261814948?format=csv',
-    load: loadThDrr,
-  },
+  // TH DRR 2024 is PARKED (/gg M6 Codex 2026-07-28): its number-band →
+  // engine-class crosswalk proved invalid — 1xxx–5xxx sections are
+  // dominantly engine class 4, not 3, so band medians biased class-3 roads
+  // ~4.6 dB low (hand-tuned arm was closer). Re-enable after class
+  // attribution via exact-ref joins (dominant OSM class per census code),
+  // not administrative bands. The TH hand-tuned arm in defaults.rs carries
+  // TH until then.
+  // {
+  //   iso: 'TH',
+  //   name: 'DRR Rural Roads AADT 2024 (กรมทางหลวงชนบท, MOT CKAN mirror)',
+  //   url: 'https://datagov.mot.go.th/datastore/dump/d0675c68-510b-45e1-b865-1ce261814948?format=csv',
+  //   load: loadThDrr,
+  // },
 ]
 
 // ── Compute per (iso, class) ─────────────────────────────────────────────
@@ -158,7 +165,10 @@ for (const census of CENSUSES) {
   console.log(`  (${census.iso}: ${rows.length} census rows used from ${censusFile}; ${skippedNoSplit} no-split, ${skippedClass} non-rural codes skipped)`)
 }
 
-if (entries.length === 0) throw new Error('no census entries produced — refusing to emit an empty table')
+// An empty CENSUSES list (all adapters parked) emits an empty table — the
+// cascade arm then never fires and the hand-tuned arms carry everything.
+// Throw only when an adapter is present but yields nothing (a data bug).
+if (CENSUSES.length > 0 && entries.length === 0) throw new Error('no census entries produced — refusing to emit an empty table')
 // binary_search_by in the consumer requires the table sorted by (iso, class)
 // — enforce it here; a new census adapter inserted out of order must never
 // silently break every lookup (/gg M6 #4).

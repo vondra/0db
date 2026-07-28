@@ -743,12 +743,12 @@ mod tests {
             "receiver UNKNOWN → WORLD"
         );
         assert_eq!(
-            baked.aadt_light_effective, 899.7,
-            "baked TH → the measured TH arm"
+            baked.aadt_light_effective, 3720.0,
+            "baked TH → the hand-tuned TH rural arm (measured arm parked, /gg M6 Codex)"
         );
         // The popup's nominal (pre-factor) display surface follows the same
         // row admin (nominal_road_aadt call inside the segment loop).
-        assert_eq!(baked.aadt_light_nominal, 899.7);
+        assert_eq!(baked.aadt_light_nominal, 3720.0);
         assert_eq!(world.aadt_light_nominal, 2640.0);
     }
 

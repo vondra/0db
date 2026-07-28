@@ -402,9 +402,15 @@ async function main() {
     if (!gateOk) process.exitCode = 1
     return
   }
-  if (!gateOk) {
-    console.error(`\n  REFUSING to ${MODE}: held-out precision ${(report.precision * 100).toFixed(2)}% < ${(PRECISION_GATE * 100).toFixed(0)}%. Fix the matcher, not the gate.`)
-    process.exit(1)
+  if (!gateOk && MODE !== 'claims') {
+    // Insufficient evidence is a SAFE NO-OP, not a chain failure (/gg M6
+    // Codex: a nonzero exit here aborts the whole chain before later
+    // phases). The matcher publishes nothing until the gate passes; the
+    // message is the alarm. (--claims stays a dry-run below the gate.)
+    console.log(`\n  Insufficient evidence for ${MODE} — writing 0 rows (matcher unpublished until the gate passes; precision ${(report.precision * 100).toFixed(2)}% ≥ ${(PRECISION_GATE * 100).toFixed(0)}%, claims ${report.tp.toLocaleString()} ≥ ${PRECISION_GATE_MIN_CLAIMS})`)
+    console.log(`\n=== Results ===`)
+    console.log(`  ${scanRes.rowsScanned.toLocaleString()} rows scanned, 0 files updated (gate not met)`)
+    return
   }
 
   const { claims, ambiguous, droppedConflict, droppedSpread } = computeClaims(census, scanRes)

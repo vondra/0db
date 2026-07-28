@@ -58,16 +58,20 @@ Motorways and trunk highways are therefore enriched by **numeric `ref` match to 
 
 ### Tier 4 — class defaults (engine cascade)
 
-Segments with no `ref` match above are **not stamped by this enricher**; rows still unenriched after all enrichers resolve through the engine's traffic-default cascade (city → measured region → country → continent → world). Since M6 (2026-07-28) Thailand's cascade values are **measured, not hand-tuned**: `scripts/gen-region-defaults-rs.mjs` computes the median per-section AADT and median class shares of this same DRR census into `engine/noise-compute/src/region_defaults_generated.rs`:
+Segments with no `ref` match above are **not stamped by this enricher**; rows still unenriched after all enrichers resolve through the engine's traffic-default cascade (city → country → continent → world). Thailand carries explicit cascade arms for classes 0–5 (local/service classes 6–12 use the generic world defaults):
 
-| OSM class | TH rural (measured DRR 2024 median) | Bangkok (metro default) |
+| OSM class | TH rural (country default) | Bangkok (metro default) |
 |---|---:|---:|
-| 3 secondary | 1,919 total (n=3,158 sections) | 9,000 |
-| 4 tertiary | 1,006 total (n=106 sections) | 3,750 |
+| 0 motorway | 60,000 | 90,000 |
+| 1 trunk | 30,000 | 45,000 |
+| 2 primary | 15,000 | 22,500 |
+| 3 secondary | 6,000 | 9,000 |
+| 4 tertiary | 2,500 | 3,750 |
+| 5 residential | 1,200 | 1,800 |
 
-Classes the DRR rural census does not cover (0 motorway, 1 trunk, 2 primary, 5 residential) have no per-section measurements and fall through to the GDP-scale/WORLD arms below the measured table; the Bangkok metro arm (city tier) still wins inside the metro.
+**Thai vehicle split**: 62/10/13/**15** rural and 60/8/7/**25** Bangkok (light/medium/heavy/motorcycle). Motorcycles are the single largest vehicle class in central Bangkok and dominate rural routes too.
 
-**Measured vehicle split** (DRR medians): secondary 44/3/2/**44**, tertiary 35/2/2/**51** (light/medium/heavy/motorcycle) — the census shows motorcycles at ~2–3× the share the old hand-tuned split (62/10/13/15) assumed. The Bangkok metro arm keeps 60/8/7/**25**.
+*A measured DRR-derived arm (M6.3) was built and then parked within a day: the census number-band → engine-class crosswalk proved invalid (/gg review — 1xxx–5xxx sections are dominantly engine class 4, not 3, so band-median defaults biased class-3 roads low). It re-lands after class attribution via exact-ref joins.*
 
 **Coverage**: 12M+ OSM road segments scanned across 402 Thai hexes.
 

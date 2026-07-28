@@ -8,9 +8,11 @@
 //!   city default (tier-1 metro override)   e.g. São Paulo, Bangkok, NYC, ...
 //!   │   ↓ fallback
 //!   MEASURED region default                country × class medians from national
-//!   │   (region_defaults_generated.rs)     censuses (M6.3; TH DRR 2024 today)
+//!   │   (region_defaults_generated.rs)     censuses (M6.3 — mechanism parked,
+//!   │                                        table empty: the TH DRR band→class
+//!   │                                        crosswalk proved invalid /gg M6)
 //!   │   ↓ fallback
-//!   country default                        e.g. BR rural (hand-tuned), GDP-scaled
+//!   country default                        e.g. TH/BR rural (hand-tuned), GDP-scaled
 //!   │   ↓ fallback
 //!   continent default                      e.g. SA/AF coarse averages
 //!   │   ↓ fallback
@@ -21,7 +23,10 @@
 //! table bit-for-bit so today's non-admin call sites see no behavior change.
 //! The measured region arm is generated from census data only
 //! (`scripts/gen-region-defaults-rs.mjs`) and SUPERSEDES a country's
-//! hand-tuned arm: the TH arm was deleted when the DRR 2024 medians landed
+//! hand-tuned arm once its class attribution is proven — the TH DRR attempt
+//! was parked (/gg M6 Codex: 1xxx–5xxx sections are dominantly engine class
+//! 4, not 3, so band medians biased class-3 roads ~4.6 dB low); it re-lands
+//! with class attribution via exact-ref joins.
 //! (M6); BR's hand-tuned arm stays until a BR per-section census is wired
 //! into the pipeline (the DNIT-derived BR table is corridor-level).
 //!
@@ -128,9 +133,11 @@ fn city_default(city_id: u16, class: u8) -> Option<Aadt> {
 
 // Three-layer policy:
 //   (a) MEASURED region arm from `region_defaults_generated::region_default`
-//       — country × class medians computed from national censuses (M6.3;
-//       TH DRR 2024 rural roads tonight). A country present there has its
-//       hand-tuned arm below DELETED (superseded by measured data).
+//       — country × class medians computed from national censuses (M6.3).
+//       PARKED: the TH DRR band→class crosswalk proved invalid (/gg M6
+//       Codex), so the generated table is empty until class attribution via
+//       exact-ref joins lands; the arm then supersedes that country's
+//       hand-tuned arm below.
 //   (b) Hand-tuned arm for a country whose enricher publishes per-class
 //       AADT but has NO per-section measured census wired in (BR rural —
 //       DNIT-derived corridor table; TH's arm was deleted at M6).
@@ -168,6 +175,11 @@ fn is_traffic_scaled(class: u8) -> bool {
 
 fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     // (a) MEASURED region arm — census medians, country × class (M6.3).
+    // PARKED: the TH DRR number-band → engine-class crosswalk proved invalid
+    // (/gg M6 Codex: band-median defaults biased engine class 3 ~4.6 dB low
+    // because 1xxx–5xxx sections are dominantly class 4). The mechanism and
+    // generated table stay for censuses with proper class attribution
+    // (exact-ref joins); TH's entries are removed until then.
     if let Some(v) = crate::region_defaults_generated::region_default(iso, class) {
         return Some(v);
     }
@@ -181,14 +193,20 @@ fn country_default(iso: &[u8; 2], class: u8) -> Option<Aadt> {
     // pipeline (the DNIT-derived BR table is corridor-level, not per-section
     // counts).
     match (iso, class) {
-        // ─── Thailand rural — DOH-corridor classes, split 62/10/13/15 ────
-        // Source: pipeline/enrich-roads-th.ts thaiClassSplit(isBangkok=false)
-        // over DOH corridor totals. Rural baseline, Bangkok hex overrides via
-        // CITY_BANGKOK above. Classes 3/4 are superseded by the measured DRR
-        // medians in region_defaults_generated.
+        // ─── Thailand rural — split 62/10/13/15 ───────────────────────────
+        // Thai-tuned class totals × pipeline/enrich-roads-th.ts
+        // thaiClassSplit(isBangkok=false). Rural baseline, Bangkok hex
+        // overrides via CITY_BANGKOK above. The M6.3 measured DRR arm is
+        // PARKED (see country_default): the DRR number-band → engine-class
+        // crosswalk proved invalid (/gg M6 Codex: 1xxx–5xxx sections are
+        // dominantly engine class 4, not 3 — band-median defaults biased
+        // class-3 roads ~4.6 dB low). Re-land only after class attribution
+        // via exact-ref joins.
         (b"TH", 0) => return Some((37200.0, 6000.0, 7800.0, 9000.0)), // 60k motorway
         (b"TH", 1) => return Some((18600.0, 3000.0, 3900.0, 4500.0)), // 30k trunk
         (b"TH", 2) => return Some((9300.0, 1500.0, 1950.0, 2250.0)),  // 15k primary
+        (b"TH", 3) => return Some((3720.0, 600.0, 780.0, 900.0)),     // 6k secondary
+        (b"TH", 4) => return Some((1550.0, 250.0, 325.0, 375.0)),     // 2.5k tertiary
         (b"TH", 5) => return Some((744.0, 120.0, 156.0, 180.0)),      // 1.2k residential
 
         // ─── Brazil rural (tier 0) — split 60/10/25/5 ────────────────────
@@ -428,47 +446,18 @@ mod tests {
     }
 
     #[test]
-    fn thailand_secondary_is_drr_measured_median() {
-        // M6.3 measured region arm: TH secondary = the MEDIAN of 3,158
-        // measured DRR 2024 rural sections (road_code 1xxx–5xxx): median
-        // AADT 1,919 × median class shares 43.6/3.0/2.1/44.2 (moto-heavy —
-        // the hand-tuned 62/10/13/15 split under-counted moto 3×).
-        // Expected values come from `scripts/gen-region-defaults-rs.mjs`
-        // output — recompute from the DRR data, never hand-pick.
+    fn thailand_classes_use_the_hand_tuned_arm_while_the_measured_arm_is_parked() {
+        // M6.3 follow-up (/gg M6 Codex): the DRR band→class crosswalk proved
+        // invalid (1xxx–5xxx sections are dominantly engine class 4, so band
+        // medians biased class-3 roads low), so the measured arm is parked
+        // (REGION_DEFAULTS is empty) and TH falls back to the hand-tuned
+        // rural arm ×62/10/13/15 for every class until class attribution
+        // lands via exact-ref joins.
         let a = admin_for(b"TH", 0, Continent::Asia);
-        assert_eq!(resolve_traffic_default(3, a), (899.7, 62.4, 44.2, 912.1));
-    }
-
-    #[test]
-    fn thailand_tertiary_is_drr_measured_median() {
-        // M6.3: TH tertiary = median of 106 measured DRR 2024 minor rural
-        // sections (road_code 6xxx–7xxx): median AADT 1,006 × median shares
-        // 34.7/1.8/1.8/50.7.
-        let a = admin_for(b"TH", 0, Continent::Asia);
-        assert_eq!(resolve_traffic_default(4, a), (392.5, 20.5, 19.8, 572.7));
-    }
-
-    #[test]
-    fn thailand_motorway_falls_through_to_density_scale() {
-        // M6.3 deleted the hand-tuned TH motorway arm (no per-section
-        // motorway census exists — the DRR census is rural roads only), so
-        // TH motorway now resolves via the WB density fallback:
-        // WORLD_DEFAULT 30,000 × 1.252 (density 140.4/km²) ≈ 37.56k.
-        let a = admin_for(b"TH", 0, Continent::Asia);
-        let (l, m, h, x) = resolve_traffic_default(0, a);
-        let total = l + m + h + x;
-        assert!(
-            (total - 37560.0).abs() < 1.0,
-            "TH motorway ≈ 37.56k (density scale 1.252), got {}",
-            total
-        );
-    }
-
-    #[test]
-    fn thailand_residential_falls_through_to_world() {
-        // No measured residential arm and class 5 is not GDP-scaled → WORLD.
-        let a = admin_for(b"TH", 0, Continent::Asia);
-        assert_eq!(resolve_traffic_default(5, a), WORLD_DEFAULT[5]);
+        assert_eq!(resolve_traffic_default(3, a), (3720.0, 600.0, 780.0, 900.0));
+        assert_eq!(resolve_traffic_default(4, a), (1550.0, 250.0, 325.0, 375.0));
+        assert_eq!(resolve_traffic_default(0, a), (37200.0, 6000.0, 7800.0, 9000.0));
+        assert_eq!(resolve_traffic_default(5, a), (744.0, 120.0, 156.0, 180.0));
     }
 
     #[test]
