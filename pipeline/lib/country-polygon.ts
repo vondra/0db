@@ -64,38 +64,11 @@ function cgazFeatures(): ReadonlyArray<CgazFeature> {
 }
 
 // CGAZ keys countries by ISO 3166-1 alpha-3 (`shapeGroup`); callers use alpha-2.
-// Exactly the 199 alpha-3 codes present in CGAZ ADM0 v6.0.0 (its remaining 19
-// features are numeric US-DoS disputed-area codes with no ISO identity).
-// Dependent territories with their own alpha-2 (HK, PR, GI, …) are not separate
-// CGAZ features — they are absent here and fail loud below by design.
-// Exported for chain/scope.ts (country → CGAZ bbox derivation) — ONE iso table.
-export const ISO2_TO_ISO3: Record<string, string> = {
-  AD: 'AND', AE: 'ARE', AF: 'AFG', AG: 'ATG', AL: 'ALB', AM: 'ARM', AO: 'AGO', AQ: 'ATA',
-  AR: 'ARG', AT: 'AUT', AU: 'AUS', AZ: 'AZE', BA: 'BIH', BB: 'BRB', BD: 'BGD', BE: 'BEL',
-  BF: 'BFA', BG: 'BGR', BH: 'BHR', BI: 'BDI', BJ: 'BEN', BN: 'BRN', BO: 'BOL', BR: 'BRA',
-  BS: 'BHS', BT: 'BTN', BW: 'BWA', BY: 'BLR', BZ: 'BLZ', CA: 'CAN', CD: 'COD', CF: 'CAF',
-  CG: 'COG', CH: 'CHE', CI: 'CIV', CL: 'CHL', CM: 'CMR', CN: 'CHN', CO: 'COL', CR: 'CRI',
-  CU: 'CUB', CV: 'CPV', CY: 'CYP', CZ: 'CZE', DE: 'DEU', DJ: 'DJI', DK: 'DNK', DM: 'DMA',
-  DO: 'DOM', DZ: 'DZA', EC: 'ECU', EE: 'EST', EG: 'EGY', EH: 'ESH', ER: 'ERI', ES: 'ESP',
-  ET: 'ETH', FI: 'FIN', FJ: 'FJI', FM: 'FSM', FR: 'FRA', GA: 'GAB', GB: 'GBR', GD: 'GRD',
-  GE: 'GEO', GH: 'GHA', GL: 'GRL', GM: 'GMB', GN: 'GIN', GQ: 'GNQ', GR: 'GRC', GT: 'GTM',
-  GW: 'GNB', GY: 'GUY', HN: 'HND', HR: 'HRV', HT: 'HTI', HU: 'HUN', ID: 'IDN', IE: 'IRL',
-  IL: 'ISR', IN: 'IND', IQ: 'IRQ', IR: 'IRN', IS: 'ISL', IT: 'ITA', JM: 'JAM', JO: 'JOR',
-  JP: 'JPN', KE: 'KEN', KG: 'KGZ', KH: 'KHM', KI: 'KIR', KM: 'COM', KN: 'KNA', KP: 'PRK',
-  KR: 'KOR', KW: 'KWT', KZ: 'KAZ', LA: 'LAO', LB: 'LBN', LC: 'LCA', LI: 'LIE', LK: 'LKA',
-  LR: 'LBR', LS: 'LSO', LT: 'LTU', LU: 'LUX', LV: 'LVA', LY: 'LBY', MA: 'MAR', MC: 'MCO',
-  MD: 'MDA', ME: 'MNE', MG: 'MDG', MH: 'MHL', MK: 'MKD', ML: 'MLI', MM: 'MMR', MN: 'MNG',
-  MR: 'MRT', MT: 'MLT', MU: 'MUS', MV: 'MDV', MW: 'MWI', MX: 'MEX', MY: 'MYS', MZ: 'MOZ',
-  NA: 'NAM', NE: 'NER', NG: 'NGA', NI: 'NIC', NL: 'NLD', NO: 'NOR', NP: 'NPL', NR: 'NRU',
-  NZ: 'NZL', OM: 'OMN', PA: 'PAN', PE: 'PER', PG: 'PNG', PH: 'PHL', PK: 'PAK', PL: 'POL',
-  PT: 'PRT', PW: 'PLW', PY: 'PRY', QA: 'QAT', RO: 'ROU', RS: 'SRB', RU: 'RUS', RW: 'RWA',
-  SA: 'SAU', SB: 'SLB', SC: 'SYC', SD: 'SDN', SE: 'SWE', SG: 'SGP', SI: 'SVN', SK: 'SVK',
-  SL: 'SLE', SM: 'SMR', SN: 'SEN', SO: 'SOM', SR: 'SUR', SS: 'SSD', ST: 'STP', SV: 'SLV',
-  SY: 'SYR', SZ: 'SWZ', TD: 'TCD', TG: 'TGO', TH: 'THA', TJ: 'TJK', TL: 'TLS', TM: 'TKM',
-  TN: 'TUN', TO: 'TON', TR: 'TUR', TT: 'TTO', TV: 'TUV', TW: 'TWN', TZ: 'TZA', UA: 'UKR',
-  UG: 'UGA', US: 'USA', UY: 'URY', UZ: 'UZB', VA: 'VAT', VC: 'VCT', VE: 'VEN', VN: 'VNM',
-  VU: 'VUT', WS: 'WSM', XK: 'XKX', YE: 'YEM', ZA: 'ZAF', ZM: 'ZMB', ZW: 'ZWE',
-}
+// The ONE table lives in scripts/iso-codes.mjs (shared with scripts/*.mjs);
+// re-exported here for the pipeline's existing consumers (chain/scope.ts,
+// admin-at.ts, validation/lib.ts).
+import { ISO2_TO_ISO3 } from '../../scripts/iso-codes.mjs'
+export { ISO2_TO_ISO3 }
 
 type Ring = ReadonlyArray<readonly [number, number]>
 
@@ -131,8 +104,10 @@ export function makeCountryGate(iso2: string): (lat: number, lon: number) => boo
  * ma-national-railway were one generic-heal run away from deletion).
  */
 export const NON_CGAZ_OWNERSHIP_BBOXES: ReadonlyArray<{ iso2: string; bbox: readonly [number, number, number, number] }> = [
-  // New Caledonia — no CGAZ feature (not even under FRA's rings); nearest
-  // foreign land (Vanuatu) ~500 km, so the bbox IS a safe ownership area.
+  // New Caledonia — no CGAZ feature OF ITS OWN (AdminAt resolves it FR via
+  // FRA's overseas rings — measured on the 2026-07 admin-bin regen); NC keeps
+  // a separate ownership identity for the national-pass machinery, where the
+  // bbox IS a safe ownership area (nearest foreign land, Vanuatu, ~500 km).
   { iso2: 'NC', bbox: [-23.0, 163.5, -19.5, 168.5] },
 ]
 
@@ -194,7 +169,9 @@ export function segmentWhollyOutside(
 // brute-forced): a ray-cast crossing can only come from an edge straddling the query
 // latitude, so band[⌊(lat-s)/bandH⌋] lists exactly the candidate edges — turning the
 // O(ring) point-in-polygon into O(edges-in-band) for huge rings (China/Russia).
-type IndexedRing = { outer: Ring; holes: Ring[]; w: number; s: number; e: number; n: number; bands: number[][] | null; bandH: number }
+// Exported (with cgazLandIndex/inIndexedRings below) for lib/admin-at.ts's global
+// point→country index, which reuses the same banded rings instead of re-parsing CGAZ.
+export type IndexedRing = { outer: Ring; holes: Ring[]; w: number; s: number; e: number; n: number; bands: number[][] | null; bandH: number }
 
 /** Outer ring + interior holes + lon/lat bbox per polygon of a CGAZ geometry.
  *  Holes are enclaves of OTHER countries (e.g. a Tajik exclave inside Uzbekistan):
@@ -410,6 +387,50 @@ function coastWithin(lat: number, lon: number, distM: number, want: (iso3: strin
 
 function otherCountryWithin(lat: number, lon: number, bufferM: number, exceptIso3: string): boolean {
   return coastWithin(lat, lon, bufferM, iso3 => iso3 !== exceptIso3)
+}
+
+// ── AdminAt raw material (lib/admin-at.ts) ──────────────────────────────────
+
+/** Land rings of EVERY CGAZ feature (ISO-mapped AND disputed numeric codes),
+ *  memoised per process — the raw material for AdminAt's global point→country
+ *  index. Exposed so admin-at.ts never re-parses the 95 MB GeoJSON nor
+ *  re-derives the band indexes this module already builds. */
+export function cgazLandIndex(): ReadonlyArray<{ iso3: string; idx: IndexedRing[] }> {
+  return landMask()
+}
+
+/** Banded PIP over a cgazLandIndex ring set — the exported twin of the private
+ *  inIndexed, for AdminAt's per-part exact test. */
+export function inIndexedRings(idx: readonly IndexedRing[], lat: number, lon: number): boolean {
+  return inIndexed(idx, lat, lon)
+}
+
+/** Distinct shapeGroups (ISO alpha-3 AND disputed numeric codes) whose coast
+ *  lies within `distM` of the point — the candidate set for AdminAt's
+ *  uniquely-attributable coastal fallback: exactly one shapeGroup within the
+ *  buffer means the sea point belongs to that country; zero means open sea,
+ *  two or more means strait ambiguity (never "first candidate wins"). Same
+ *  segment grid + radius math as coastWithin, collecting instead of
+ *  short-circuiting. */
+export function coastShapeGroupsWithin(lat: number, lon: number, distM: number): string[] {
+  const grid = segGrid ?? (segGrid = buildSegGrid())
+  const cosLat = Math.max(Math.cos(lat * Math.PI / 180), 0.05)
+  const ry = Math.ceil(distM / (SEG_GRID_DEG * 110_540)) + 1
+  const rx = Math.ceil(distM / (SEG_GRID_DEG * 111_320 * cosLat)) + 1
+  const cx = Math.floor((lon + 180) / SEG_GRID_DEG)
+  const cy = Math.floor((lat + 90) / SEG_GRID_DEG)
+  const found = new Set<string>()
+  for (let ix = cx - rx; ix <= cx + rx; ix++) {
+    for (let iy = cy - ry; iy <= cy + ry; iy++) {
+      const bucket = grid.get(segCell(ix, iy))
+      if (!bucket) continue
+      for (const s of bucket) {
+        if (found.has(s.iso3)) continue
+        if (pointToSegmentDist(lat, lon, s.aLat, s.aLon, s.bLat, s.bLon) <= distM) found.add(s.iso3)
+      }
+    }
+  }
+  return [...found]
 }
 
 /**

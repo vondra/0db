@@ -42,6 +42,11 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// ISO alpha-2 → continent comes from the ONE shared table in
+// scripts/iso-continent.mjs (also consumed by pipeline/lib/admin-at.ts).
+// Must match engine/noise-compute/src/admin.rs::Continent and
+// scripts/h3-admin-metros.json continent ids.
+import { isoContinent } from './iso-continent.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const WB_INPUT = resolve(ROOT, 'scripts', 'wb-country-2022.json')
@@ -53,24 +58,6 @@ const WORLD_MEDIAN_DENSITY = 60.0    // people/km², ~median of populated countr
 const SCALE_MIN = 0.7                // ±30% band
 const SCALE_MAX = 1.3
 const SCALE_SPAN = (SCALE_MAX - SCALE_MIN) / 2  // 0.3 — tanh amplitude
-
-// ISO alpha-2 → continent. Must match
-// engine/noise-compute/src/admin.rs::Continent and
-// scripts/h3-admin-metros.json continent ids.
-// Source: UN standard M49 region codes (https://unstats.un.org/unsd/methodology/m49/).
-const CONTINENT = {
-  Europe: new Set('AD,AL,AM,AT,AX,AZ,BA,BE,BG,BY,CH,CY,CZ,DE,DK,EE,ES,FI,FO,FR,GB,GE,GG,GI,GR,HR,HU,IE,IM,IS,IT,JE,LI,LT,LU,LV,MC,MD,ME,MK,MT,NL,NO,PL,PT,RO,RS,RU,SE,SI,SJ,SK,SM,TR,UA,VA,XK'.split(',')),
-  NorthAmerica: new Set('AG,AI,AW,BB,BL,BM,BQ,BS,BZ,CA,CR,CU,CW,DM,DO,GD,GL,GP,GT,HN,HT,JM,KN,KY,LC,MF,MQ,MS,MX,NI,PA,PM,PR,SV,SX,TC,TT,US,VC,VG,VI'.split(',')),
-  SouthAmerica: new Set('AR,BO,BR,CL,CO,EC,FK,GF,GY,PE,PY,SR,UY,VE'.split(',')),
-  Asia: new Set('AE,AF,BD,BH,BN,BT,CC,CN,CX,HK,ID,IL,IN,IO,IQ,IR,JO,JP,KG,KH,KP,KR,KW,KZ,LA,LB,LK,MM,MN,MO,MV,MY,NP,OM,PH,PK,PS,QA,SA,SG,SY,TH,TJ,TL,TM,TW,UZ,VN,YE'.split(',')),
-  Africa: new Set('AO,BF,BI,BJ,BW,CD,CF,CG,CI,CM,CV,DJ,DZ,EG,EH,ER,ET,GA,GH,GM,GN,GQ,GW,KE,KM,LR,LS,LY,MA,MG,ML,MR,MU,MW,MZ,NA,NE,NG,RE,RW,SC,SD,SH,SL,SN,SO,SS,ST,SZ,TD,TG,TN,TZ,UG,YT,ZA,ZM,ZW'.split(',')),
-  Oceania: new Set('AS,AU,CK,FJ,FM,GU,KI,MH,MP,NC,NF,NR,NU,NZ,PF,PG,PN,PW,SB,TK,TO,TV,UM,VU,WF,WS'.split(',')),
-}
-
-function isoContinent(iso) {
-  for (const [c, set] of Object.entries(CONTINENT)) if (set.has(iso)) return c
-  return null
-}
 
 const wb = JSON.parse(readFileSync(WB_INPUT, 'utf8'))
 const wiki = JSON.parse(readFileSync(WIKI_INPUT, 'utf8'))
@@ -204,8 +191,8 @@ out.push(`//! Per-country and per-continent AADT scale factors relative to
 //! WORLD_DEFAULT — motorway-scale doesn't predict residential AADT.
 //!
 //! Continent scales are population-weighted averages of their countries'
-//! factors (reaches only hexes whose country centroid fell outside every
-//! Natural Earth polygon, e.g. contested boundaries, micro-ocean cells).
+//! factors (reaches only hexes whose country assignment fell outside every
+//! CGAZ polygon, e.g. disputed areas, micro-ocean cells).
 //!
 //! To refresh:
 //!   node scripts/fetch-wb-country-data.mjs ${wb.year}
@@ -252,7 +239,8 @@ for (const [cont, scale] of Object.entries(continentScale).sort()) {
 out.push('        Continent::Unknown => None,')
 out.push('    }')
 out.push('}')
-out.push('')
+// rustfmt-clean: join('\n') + trailing '\n' = exactly one final newline
+// (a trailing out.push('') here made the gate's rustfmt check fail 2026-07-28).
 
 writeFileSync(OUTPUT, out.join('\n') + '\n')
 console.log(`Wrote ${OUTPUT}`)

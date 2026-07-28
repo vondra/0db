@@ -36,8 +36,8 @@
 //! WORLD_DEFAULT — motorway-scale doesn't predict residential AADT.
 //!
 //! Continent scales are population-weighted averages of their countries'
-//! factors (reaches only hexes whose country centroid fell outside every
-//! Natural Earth polygon, e.g. contested boundaries, micro-ocean cells).
+//! factors (reaches only hexes whose country assignment fell outside every
+//! CGAZ polygon, e.g. disputed areas, micro-ocean cells).
 //!
 //! To refresh:
 //!   node scripts/fetch-wb-country-data.mjs 2022

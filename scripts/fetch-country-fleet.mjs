@@ -25,17 +25,14 @@ import { execFileSync } from 'node:child_process'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
+import { ISO2_TO_ISO3 } from './iso-codes.mjs'
+import { isoContinent } from './iso-continent.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const NE_GEOJSON = resolve(__dirname, 'cache', 'ne_10m_admin_0_countries.geojson')
 const FLEET_JSON = resolve(__dirname, 'country-fleet.json')
 const PDF_URL = (iso3) =>
   `https://cdn.who.int/media/docs/default-source/country-profiles/road-safety/road-safety-2023-${iso3.toLowerCase()}.pdf`
 
-if (!existsSync(NE_GEOJSON)) {
-  console.error(`Natural Earth cache missing (${NE_GEOJSON}) — run scripts/build-h3-admin.ts once first.`)
-  process.exit(1)
-}
 try {
   execFileSync('pdftotext', ['-v'], { stdio: 'ignore' })
 } catch {
@@ -43,32 +40,27 @@ try {
   process.exit(1)
 }
 
-/** Natural Earth files a few island states under "Seven seas (open ocean)",
- *  which has no fleet band — remap them to the continent whose usage pattern
- *  they share, or the generator would drop them to WORLD (Maldives at 87 %
- *  moto ownership landing on 1 % was the /gg example). */
-const SEVEN_SEAS_CONTINENT = {
-  MV: 'Asia', // Maldives
-  SC: 'Africa', // Seychelles
-  MU: 'Africa', // Mauritius
-  IO: 'Asia', // British Indian Ocean Territory
-  SH: 'Africa', // Saint Helena
-  TF: 'Africa', // French Southern Territories
-}
+/** TF (French Southern Territories) has no entry in the M49 continent table;
+ *  pin its band explicitly or the row would lose the documented
+ *  country → continent → WORLD cascade on refresh. */
+const CONTINENT_PATCH = { TF: 'Africa' }
 
-/** ISO2 → { iso3, name, continent } from Natural Earth (the project's country
- *  SSOT — same file build-h3-admin.ts uses). `_EH` variants repair the -99
- *  quirks (France, Norway). */
-function loadCountries() {
-  const ne = JSON.parse(readFileSync(NE_GEOJSON, 'utf8'))
+/** ISO2 → { iso3, name, continent } from the project's ONE tables
+ *  (scripts/iso-codes.mjs + scripts/iso-continent.mjs — CGAZ/M49, no Natural
+ *  Earth anywhere in the project since M2 2026-07-28). Iterates the union of
+ *  the table and existing fleet.json rows so dependent territories with their
+ *  own rows (HK/PR/…) keep refreshing; names already in fleet.json are
+ *  preserved, brand-new rows start as the ISO code. */
+function loadCountries(fleet) {
   const out = new Map()
-  for (const f of ne.features) {
-    const p = f.properties
-    const iso2 = p.ISO_A2_EH !== '-99' ? p.ISO_A2_EH : p.ISO_A2
-    const iso3 = p.ISO_A3_EH !== '-99' ? p.ISO_A3_EH : p.ISO_A3
-    if (!iso2 || iso2 === '-99' || !iso3 || iso3 === '-99') continue
-    const continent = SEVEN_SEAS_CONTINENT[iso2] ?? p.CONTINENT
-    if (!out.has(iso2)) out.set(iso2, { iso3, name: p.NAME, continent })
+  for (const [iso2, iso3] of Object.entries(ISO2_TO_ISO3)) {
+    out.set(iso2, { iso3, name: iso2, continent: CONTINENT_PATCH[iso2] ?? isoContinent(iso2) })
+  }
+  for (const [iso2, row] of Object.entries(fleet.countries ?? {})) {
+    const meta = out.get(iso2) ?? { iso3: ISO2_TO_ISO3[iso2] ?? iso2, name: iso2, continent: null }
+    meta.name = row.name ?? meta.name
+    meta.continent ??= row.continent ?? null
+    out.set(iso2, meta)
   }
   return out
 }
@@ -109,10 +101,10 @@ export function parseSafeVehiclesBlock(text) {
 }
 
 async function main() {
-  const countries = loadCountries()
-  const onlyIso2 = process.argv.slice(2).map((s) => s.toUpperCase())
   const fleet = existsSync(FLEET_JSON) ? JSON.parse(readFileSync(FLEET_JSON, 'utf8')) : { countries: {} }
   fleet.countries ??= {}
+  const countries = loadCountries(fleet)
+  const onlyIso2 = process.argv.slice(2).map((s) => s.toUpperCase())
 
   const tmp = mkdtempSync(join(tmpdir(), 'who-fleet-'))
   let ok = 0

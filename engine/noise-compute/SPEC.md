@@ -1151,24 +1151,24 @@ call plausible. Validated by the "no urban residential > 2 000 veh/day"
 rule of thumb used by several city AADT-modelling agencies (e.g. TfL
 LATA 2019 §3.2.1, which caps residential model outputs similarly).
 
-### Natural Earth geopolitical policy
+### CGAZ geopolitical policy
 
-`scripts/build-h3-admin.ts` + `data/prepared/h3r4-admin.bin` use
-Natural Earth 1:10 m `admin_0_countries` for country polygons, plus
-hand-curated metro polygons in `scripts/h3-admin-metros.json`.
+`scripts/build-h3-admin.ts` + `data/prepared/h3r4-admin.bin` use **CGAZ
+ADM0** (`geoBoundariesCGAZ_ADM0`, geoBoundaries v6.0.0, CC-BY 4.0 —
+attribution required and carried in `pipeline/lib/country-polygon.ts`) for
+country polygons, plus hand-curated metro polygons in
+`scripts/h3-admin-metros.json`. (Natural Earth 1:10 m was retired in M2,
+2026-07-28 — its generalization mis-assigned the Hlučínsko salient.)
 
-**Natural Earth encodes a specific view of disputed boundaries**:
-- Crimea → Russia (not Ukraine)
-- Kashmir → fragmented (India / Pakistan / China line-of-control)
-- Taiwan → separate entity
-- Western Sahara → fragmented
-- Golan Heights → Israel
-
-This is **project policy, accepted as a practical simplification** — the
-hex-centroid PIP is a best-effort approximation for traffic-default
-lookup, not a political statement. Users who need a different boundary
-view can regenerate `h3r4-admin.bin` from a different polygon source
-(e.g. GADM, official national cadastres) without touching arrow data.
+Assignment is per-hex: centroid PIP via the ONE CGAZ resolver
+(`pipeline/lib/admin-at.ts`), with fine interior-grid max-share sampling
+for hexes whose centroid falls over water (coastal/island hexes like Koh
+Phangan). CGAZ's numeric US-DoS disputed-area codes carry no ISO identity;
+the project policy-maps the three road-bearing ones
+(`DISPUTED_SHAPEGROUP_ISO` in `admin-at.ts`): Falklands → FK, Aksai Chin →
+CN (administering power), Abyei → SD. This is a practical simplification
+for traffic-default lookup, not a political statement; a different boundary
+view can be baked by changing `admin-at.ts` without touching arrow data.
 
 ### Full source URLs
 
@@ -1183,7 +1183,7 @@ view can regenerate `h3r4-admin.bin` from a different polygon source
 | OECD HM1-1 | https://www.oecd.org/housing/data/affordable-housing-database/ |
 | HCM 7 TRB 2022 | https://www.trb.org/Main/Blurbs/175169.aspx |
 | Promotur tourism | https://turismodeislascanarias.com/en/analysis-tourism-canary-islands |
-| Natural Earth 10 m | https://www.naturalearthdata.com/downloads/10m-cultural-vectors/ |
+| geoBoundaries CGAZ ADM0 (CC-BY 4.0) | https://www.geoboundaries.org/ |
 | DNIT (BR AADT) | https://servicos.dnit.gov.br/vmt/ |
 | DOH (TH motorway) | https://www.doh.go.th/ |
 | BAST Zählstellen (DE) | https://www.bast.de/ |

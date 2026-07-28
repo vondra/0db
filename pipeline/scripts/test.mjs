@@ -20,7 +20,7 @@ function collect(dir) {
 }
 
 const includeNetwork = process.env.INCLUDE_NETWORK_TESTS === '1'
-const networkTests = new Set(['lib/city-polygon.test.ts', 'lib/country-polygon.test.ts'])
+const networkTests = new Set(['lib/city-polygon.test.ts', 'lib/country-polygon.test.ts', 'lib/admin-at.test.ts', 'lib/hex-country.test.ts'])
 const tests = collect(pipelineRoot)
   .map((file) => relative(pipelineRoot, file))
   .filter((file) => includeNetwork || !networkTests.has(file))
