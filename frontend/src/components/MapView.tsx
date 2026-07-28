@@ -5,6 +5,7 @@ import FlyToLocation from './FlyToLocation'
 import DetailPopup from './DetailPopup'
 import QuietZonesLayer from './QuietZonesLayer'
 import RealEstateLayer from './RealEstateLayer'
+import StayLayer from './StayLayer'
 import ValidationLayer, { type ValidationPayload, type ValidationSelection } from './ValidationLayer'
 import IsochronLayer from './IsochronLayer'
 import RasterOverlayLayer from './RasterOverlayLayer'
@@ -34,6 +35,8 @@ interface MapViewProps {
   isochronGeojson?: GeoJSON.Feature | null
   realEstateFilters?: import('./RealEstateLayer').RealEstateFilters
   onPropertySelect?: (property: import('./RealEstateLayer').Property | null) => void
+  stayFilters?: import('./StayLayer').StayFilters
+  onStaySelect?: (stay: import('./StayLayer').Stay | null) => void
   rasterOverlays?: Record<string, boolean>
   validationEnabled?: boolean
   validationPayload?: ValidationPayload | null
@@ -51,7 +54,7 @@ interface MapViewProps {
 export default function MapView({
   selectedLocation, initialCenter, initialZoom,
   basemap, onViewChange, onDetailData, onDetailPositionChange, onDetailError, detailPosition,
-  quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, rasterOverlays,
+  quietClustersEnabled, quietThreshold, highlightGeometry, isochronGeojson, realEstateFilters, onPropertySelect, stayFilters, onStaySelect, rasterOverlays,
   validationEnabled, validationPayload, onValidationSelect,
   registerGeolocateTrigger, onGeolocateActiveChange, onGeolocateReadyChange,
 }: MapViewProps) {
@@ -161,6 +164,7 @@ export default function MapView({
       {/* After the heatmap + quiet overlays so the property markers (their own
           deck overlay) stack on top rather than being hidden under the heatmap. */}
       {realEstateFilters && <RealEstateLayer filters={realEstateFilters} onPropertySelect={onPropertySelect} />}
+      {stayFilters && <StayLayer filters={stayFilters} onStaySelect={onStaySelect} />}
       {/* Validation anchors above every data overlay — a dot click also lands
           the ordinary map click, so the noise popup opens for the same spot
           (measured next to modelled is the point). Mounted only with `val=1`

@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import { ScatterplotLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
-import { markPropertyClick } from '../lib/property-click-guard'
+import { attachPinTapGuard } from '../lib/property-click-guard'
 
 export interface RealEstateFilters {
   enabled: boolean
@@ -112,6 +112,17 @@ export default function RealEstateLayer({ filters, onPropertySelect }: RealEstat
     overlay.setProps({ layers: visible.length > 0 ? [makeLayer(visible, onPropertySelect)] : [] })
   }, [overlay, visible, onPropertySelect])
 
+  // Stamp the click guard from a cheap CPU hit-test against the visible pins —
+  // see attachPinTapGuard for why this must not wait for deck's onClick pick.
+  useEffect(() => {
+    if (!mapRef || !filters.enabled || visible.length === 0) return
+    const map = mapRef.getMap()
+    return attachPinTapGuard(map.getCanvas(), (x, y) => visible.some(p => {
+      const pt = map.project([p.lng, p.lat])
+      return (x - pt.x) ** 2 + (y - pt.y) ** 2 <= 81 // 6 px radius + 2 stroke + slack
+    }))
+  }, [mapRef, filters.enabled, visible])
+
   return null
 }
 
@@ -132,12 +143,10 @@ function makeLayer(data: Property[], onSelect?: (p: Property | null) => void) {
     pickable: true,
     autoHighlight: true,
     highlightColor: [255, 255, 255, 90],
-    // Stamp the shared guard so DetailPopup skips this same click (a
-    // non-interleaved deck overlay can't stop MapLibre's separate click handler
-    // by return value — the noise popup would otherwise open over the card).
+    // No guard stamp here — attachPinTapGuard already stamped in the pointerup
+    // task (deck's click pick may lag frames behind the deferred check).
     onClick: (info) => {
       if (!info.object) return
-      markPropertyClick()
       onSelect?.(info.object as Property)
     },
   })

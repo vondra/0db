@@ -40,9 +40,9 @@ export default function DetailPopup({ detailPosition, triggerPosition, onDetailD
       if ((e.originalEvent.target as HTMLElement).closest('.maplibregl-popup')) return
 
       const { lat, lng } = e.lngLat
-      // Defer a tick so a deck.gl property-marker click (separate overlay, which
-      // can't suppress this MapLibre handler) registers first; skip if so, else
-      // the noise popup opens on top of the PropertyCard.
+      // Pin layers stamp the guard at pointerup (attachPinTapGuard), which
+      // always precedes this click handler — the deferred tick is belt and
+      // braces for any handler-ordering edge, not the primary mechanism.
       setTimeout(() => {
         if (!propertyJustClicked()) onDetailPositionChange?.({ lat, lng })
       }, 0)

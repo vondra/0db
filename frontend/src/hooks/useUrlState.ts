@@ -33,6 +33,8 @@ export interface UrlState {
   rasterOverlays: Record<string, boolean>
   /** `val=1` — validation-anchor overlay (owner/QA tool, off by default). */
   validation: boolean
+  /** `stay=1|hotel|rental` — bookable-stays overlay (pilot, off by default). */
+  stay: 'all' | 'hotel' | 'rental' | null
 }
 
 export const EMPTY_RASTER_OVERLAYS: Record<string, boolean> = Object.fromEntries(
@@ -74,6 +76,7 @@ function parseHash(): UrlState {
       basemap: DEFAULT_BASEMAP,
       rasterOverlays: { ...DEFAULT_RASTER_OVERLAYS },
       validation: false,
+      stay: null,
     }
   }
 
@@ -118,7 +121,14 @@ function parseHash(): UrlState {
     basemap: (params.get('bm') as BasemapId) || DEFAULT_BASEMAP,
     rasterOverlays,
     validation: params.get('val') === '1',
+    stay: parseStay(params.get('stay')),
   }
+}
+
+function parseStay(raw: string | null): 'all' | 'hotel' | 'rental' | null {
+  if (raw === '1' || raw === 'all') return 'all'
+  if (raw === 'hotel' || raw === 'rental') return raw
+  return null
 }
 
 function buildHash(state: {
@@ -131,6 +141,7 @@ function buildHash(state: {
   basemap?: BasemapId
   rasterOverlays?: Record<string, boolean>
   validation?: boolean
+  stay?: 'all' | 'hotel' | 'rental' | null
 }): string {
   const parts: string[] = [
     `lat=${state.lat.toFixed(4)}`,
@@ -149,6 +160,10 @@ function buildHash(state: {
 
   if (state.validation) {
     parts.push('val=1')
+  }
+
+  if (state.stay) {
+    parts.push(`stay=${state.stay === 'all' ? '1' : state.stay}`)
   }
 
   if (state.basemap && state.basemap !== DEFAULT_BASEMAP) {
@@ -183,6 +198,7 @@ export function useUrlState() {
     basemap?: BasemapId
     rasterOverlays?: Record<string, boolean>
     validation?: boolean
+    stay?: 'all' | 'hotel' | 'rental' | null
   }) => {
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {

@@ -81,9 +81,14 @@ function paletteColor(db: number): [number, number, number, number] {
  * so a swatch always has a colour.
  */
 export function paletteHex(db: number): string {
+  return '#' + paletteRgb(db).map((c) => c.toString(16).padStart(2, '0')).join('')
+}
+
+/** [`paletteHex`]'s triple for consumers that need numbers (deck.gl colors),
+ *  not a CSS string. Same clamping. */
+export function paletteRgb(db: number): [number, number, number] {
   const clamped = Number.isFinite(db) ? Math.max(db, STOPS[0].db) : STOPS[0].db
-  const { rgb } = lerpStop(clamped)
-  return '#' + rgb.map((c) => c.toString(16).padStart(2, '0')).join('')
+  return lerpStop(clamped).rgb
 }
 
 /**

@@ -9,6 +9,7 @@ import { noiseOnflyV2Routes } from './routes/noise-onfly-v2.js'
 import { isochronRoutes } from './routes/isochron.js'
 import { docsRoutes } from './routes/docs.js'
 import { propertiesRoutes } from './routes/properties.js'
+import { stayRoutes } from './routes/stay.js'
 import { rasterTileRoutes } from './routes/raster-tiles.js'
 import { aircraftRoutes } from './routes/aircraft.js'
 import { heatmapPmtilesRoutes } from './routes/heatmap-pmtiles.js'
@@ -104,6 +105,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(isochronRoutes)
   await app.register(docsRoutes)
   await app.register(propertiesRoutes)
+  await app.register(stayRoutes)
   await app.register(rasterTileRoutes, { preloadRuntimeData: opts.preloadRuntimeData ?? false })
   await app.register(aircraftRoutes)
   // Heatmap tiles: immutable pmtiles builds addressed by build-id, discovered

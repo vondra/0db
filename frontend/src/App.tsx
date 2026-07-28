@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react'
 import { Tooltip } from '@base-ui/react/tooltip'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -9,11 +9,13 @@ import LayersPanel from './components/LayersPanel'
 import MobileDetailSheet from './components/MobileDetailSheet'
 import BasemapBar from './components/BasemapBar'
 import PropertyCard from './components/PropertyCard'
+import StayCard from './components/StayCard'
 import FloatingCard from './components/FloatingCard'
 import ValidationCard, { ValidationStatusCard } from './components/ValidationCard'
 import { useUrlState, EMPTY_RASTER_OVERLAYS, QUIET_THRESHOLD_DEFAULT } from './hooks/useUrlState'
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
+import type { StayFilters, Stay } from './components/StayLayer'
 import { useValidationPayload, type ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
@@ -89,6 +91,14 @@ function MapApp() {
     enabled: false, propertyType: 'all', listingType: 'all', maxNoise: 60,
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
+  // Bookable-stays overlay (Stay22 pilot): no panel UI yet — enabled only via
+  // `stay=1|hotel|rental` in the URL, so dev previews exercise it while the
+  // default map stays untouched.
+  const stayFilters = useMemo<StayFilters>(
+    () => ({ enabled: initial.stay != null, stayType: initial.stay ?? 'all' }),
+    [initial.stay],
+  )
+  const [selectedStay, setSelectedStay] = useState<Stay | null>(null)
   // Mobile locate box lives in the BasemapBar row (one container = one
   // baseline); it fires the map's GeolocateControl through this ref.
   const geolocateTrigger = useRef<() => void>(() => {})
@@ -171,8 +181,9 @@ function MapApp() {
       basemap: overrides?.basemap ?? basemapRef.current,
       rasterOverlays: overrides?.rasterOverlays ?? rasterOverlaysRef.current,
       validation: validationEnabled,
+      stay: initial.stay,
     })
-  }, [updateUrl, validationEnabled])
+  }, [updateUrl, validationEnabled, initial.stay])
 
   const handleRasterOverlaysChange = useCallback((next: Record<string, boolean>) => {
     setRasterOverlays(next)
@@ -319,6 +330,16 @@ function MapApp() {
               </FloatingCard>
             </div>
           )}
+          {selectedStay && (
+            <div className="pointer-events-auto">
+              <FloatingCard>
+                <StayCard
+                  stay={selectedStay}
+                  onClose={() => setSelectedStay(null)}
+                />
+              </FloatingCard>
+            </div>
+          )}
         </div>
 
         <div className="pointer-events-auto">
@@ -351,6 +372,8 @@ function MapApp() {
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
         onPropertySelect={setSelectedProperty}
+        stayFilters={stayFilters}
+        onStaySelect={setSelectedStay}
         rasterOverlays={rasterOverlays}
         validationEnabled={validationEnabled}
         validationPayload={validationPayload}
