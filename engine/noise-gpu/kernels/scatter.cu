@@ -618,16 +618,28 @@ __device__ float path_integral_imd(const double* t, const unsigned char* imd, in
     return sum;
 }
 
-// ---- path_profile::vegetation_run_length — cumulative forest run (≥10 m runs). fp32.
+// ---- path_profile::vegetation_run_length — density-weighted forest depth
+// (geodata-v2 2a): the ≥10 m scattered-tree gate stays on the PHYSICAL run
+// extent, the accumulated depth is `len × v/100`. On binary rasters
+// (v ∈ {0,100}) bit-identical to the old boolean run (100/100.0f = 1.0f
+// exactly); output changes only when continuous density tiles land. fp32.
 __device__ float veg_run_length(const double* t, const unsigned char* forest, int n, float dist) {
     if (n < 2) return 0.0f;
-    float total = 0.0f, run = 0.0f;
+    float total = 0.0f, run_phys = 0.0f, run_w = 0.0f;
     for (int i = 1; i < n; i++) {
         float len = (float)(t[i] - t[i - 1]) * dist;
-        if (forest[i] > 0) run += len;
-        else { if (run >= 10.0f) total += run; run = 0.0f; }
+        if (forest[i] > 0) {
+            run_phys += len;
+            // __fmul_rn/__fadd_rn pin plain IEEE mul+add (no FMA
+            // contraction): len × 1.0f is exact, so on binary rasters the
+            // accumulation is bit-identical to the old `run += len`.
+            run_w = __fadd_rn(run_w, __fmul_rn(len, (float)forest[i] / 100.0f));
+        } else {
+            if (run_phys >= 10.0f) total += run_w;
+            run_phys = 0.0f; run_w = 0.0f;
+        }
     }
-    if (run >= 10.0f) total += run;
+    if (run_phys >= 10.0f) total += run_w;
     return total;
 }
 

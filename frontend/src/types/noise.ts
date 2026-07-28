@@ -474,6 +474,8 @@ interface LdenVariants {
 interface ForestRun {
   t_start: number
   t_end: number
+  /** Density-weighted foliage depth in metres (= physical extent on the
+   *  legacy binary raster); draw geometry from t_start/t_end. */
   len_m: number
 }
 

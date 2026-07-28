@@ -184,7 +184,9 @@ const TOOLTIP_ROWS: Array<{
 }> = [
   { key: 'dem', label: 'Elevation', fmt: v => `${Math.round(v)} m` },
   { key: 'building', label: 'Building', fmt: v => v > 0 ? `${v} m` : 'none' },
-  { key: 'forest', label: 'Forest', fmt: v => v > 0 ? 'yes' : 'no' },
+  // Canopy density 0–100 % (geodata-v2 2a continuous tiles; the legacy
+  // binary raster reads 100 % where forested, so this stays truthful).
+  { key: 'forest', label: 'Forest', fmt: v => v > 0 ? `${Math.round(v)} %` : 'no' },
 ]
 
 function renderLines(values: Partial<Record<DataLayer, number | null>>): ReactNode {

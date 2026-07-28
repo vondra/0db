@@ -230,11 +230,11 @@ export function Section4PathEffects({ trace }: { trace: SegmentTrace }) {
       <HoverText
         title={
           'A_fol — Foliage / vegetation (ISO 9613-2:2024 Annex A.2.2).\n\n' +
-          'Dense forest along the path absorbs mid-to-high frequencies.\n' +
+          'Forest along the path absorbs mid-to-high frequencies; depth\n' +
+          'is weighted by canopy density where the data carries it.\n' +
           'Capped at ~200 m effective depth. Project applies a ×0.5\n' +
-          'Central-Europe calibration because the WorldCover raster is\n' +
-          'binary (any canopy → forest), so pure foliage density is\n' +
-          'overcounted without the scalar.'
+          'Central-Europe calibration against over-counting sparse\n' +
+          'canopy as dense foliage.'
         }
       >
         Foliage

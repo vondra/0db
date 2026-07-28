@@ -329,7 +329,7 @@ The popup-facing `screening_attenuation` value returned by the engine is the inc
 ```
 A_veg,i = min(MAX_VEG_ATTEN[i], α_veg[i] × depth_m)
 ```
-where depth_m = cumulative forest depth along source-receiver path, integrated trapezoidally over intervals where the WorldCover raster is forested (see §3.5a). Contiguous runs shorter than 10 m are discarded to avoid scattered-tree false positives.
+where depth_m = density-weighted forest depth along the source-receiver path: `Σ Δlength × forest[i]/100` with right-endpoint sampling over contiguous forested intervals (see §3.5a). Runs whose PHYSICAL extent is shorter than 10 m are discarded to avoid scattered-tree false positives. On the current binary raster (0/100) this equals the plain run length bit-for-bit; continuous canopy-density tiles (geodata-v2 2a) scale each interval by its density.
 
 Constants (`ALPHA_VEG`, `MAX_VEG_ATTEN`) are ISO 9613-2:2024 Table A.1 values × 0.5 — see
 the constants block at the top of this SPEC. Rationale: binary WorldCover forest raster

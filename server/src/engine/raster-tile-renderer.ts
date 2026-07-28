@@ -158,7 +158,10 @@ function buildingColor(h: number): [number, number, number, number] {
 
 function forestColor(v: number): [number, number, number, number] {
   if (v === 0) return [0, 0, 0, 0]
-  return [0x2d, 0x6a, 0x4f, 150]
+  // Canopy-density ramp (geodata-v2 2a): alpha scales with v ∈ (0, 100].
+  // The legacy binary raster reads 100 where forested → the old flat green.
+  const alpha = Math.round(150 * Math.min(v, 100) / 100)
+  return [0x2d, 0x6a, 0x4f, Math.max(alpha, 40)]
 }
 
 // --- Barrier data (vector lines from Arrow files) ---

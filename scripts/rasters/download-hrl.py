@@ -21,10 +21,23 @@ order, each with its own client session.
 
 import argparse
 import multiprocessing
+import os
 import sys
 import time
 import zipfile
 from pathlib import Path
+
+
+def hda_client():
+    """~/.hdarc by default; HDA_USER/HDA_PASSWORD select another account —
+    the WEkEO order quota (500/day) is PER ACCOUNT, so a second account
+    doubles throughput (e.g. TCD on the default, IMD on the override)."""
+    from hda import Client, Configuration
+
+    user = os.environ.get("HDA_USER")
+    if user:
+        return Client(config=Configuration(user=user, password=os.environ["HDA_PASSWORD"]))
+    return Client()
 
 # EEA38+UK incl. Azores/Canaries — matches the HRL VLCC production extent.
 EU_BBOX = [-32.0, 26.0, 45.0, 72.5]
@@ -84,13 +97,11 @@ def extract_tifs(zip_path: Path, dest: Path) -> list[str]:
 
 
 def worker(product: str, offset: int, stride: int) -> None:
-    from hda import Client  # per-process session
-
     spec = PRODUCTS[product]
     dest = spec["dest"]
     done_dir = dest / ".done"
     zips_dir = dest / ".zips"
-    client = Client()
+    client = hda_client()  # per-process session
     results = client.search(product_query(spec))
     n = len(results.results)
     for i in range(offset, n, stride):
@@ -154,9 +165,7 @@ def main() -> int:
     if stale:
         print(f"[{args.product}] invalidated {len(stale)} markers without tiles", flush=True)
 
-    from hda import Client
-
-    n = len(Client().search(product_query(spec)).results)
+    n = len(hda_client().search(product_query(spec)).results)
     done = len(list((dest / ".done").iterdir()))
     print(f"[{args.product}] {n} tiles total, {done} already done → {dest}", flush=True)
     if done >= n:

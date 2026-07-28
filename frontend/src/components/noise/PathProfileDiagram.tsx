@@ -264,7 +264,9 @@ export function PathProfileDiagram({
       w: 'w-[6ch]',
       label: 'Forest',
       tabular: false,
-      value: hoverIdx != null ? (trace.forest_u8[hoverIdx] > 0 ? 'yes' : 'no') : '—',
+      // Canopy density % (continuous tiles, geodata-v2 2a); the legacy
+      // binary raster reads 100 where forested, so this stays truthful.
+      value: hoverIdx != null ? (trace.forest_u8[hoverIdx] > 0 ? `${trace.forest_u8[hoverIdx]} %` : 'no') : '—',
     },
     {
       w: 'w-[8ch]',

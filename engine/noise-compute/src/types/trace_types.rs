@@ -48,6 +48,9 @@ impl PerPeriod<[f64; NUM_BANDS]> {
 pub struct ForestRun {
     pub t_start: f64,
     pub t_end: f64,
+    /// DENSITY-WEIGHTED depth in metres (`Σ Δlen × forest/100`, geodata-v2
+    /// 2a) — equals the physical extent on binary rasters; geometry lives
+    /// in `t_start`/`t_end`.
     pub len_m: f64,
 }
 

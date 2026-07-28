@@ -539,9 +539,11 @@ fn nearest_t_index(t: &[f64], t_query: f64) -> usize {
 
 /// Vegetation (forest) attenuation per band from a `PathProfile`.
 ///
-/// Uses the trapezoidal "run of forest-flagged intervals ≥10 m" integral on
-/// `profile.forest_u8[]`. Non-uniform t spacing is weighted by interval length
-/// so endpoints (dense) don't dominate — fixes the pre-existing FusedGrid bias.
+/// Depth = `Σ Δlen × forest[i]/100` (right-endpoint density sampling) over
+/// contiguous forested runs, keeping only runs whose PHYSICAL extent is
+/// ≥ 10 m (`vegetation_run_length`). Non-uniform t spacing is weighted by
+/// interval length so endpoints (dense) don't dominate — fixes the
+/// pre-existing FusedGrid bias.
 pub fn vegetation_attenuation_path(profile: &PathProfile) -> [f64; NUM_BANDS] {
     let forest_depth = vegetation_run_length(&profile.t, &profile.forest_u8, profile.dist_m);
     vegetation::vegetation_attenuation(forest_depth)

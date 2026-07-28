@@ -115,9 +115,15 @@ pub fn path_profile_into_trace(
 }
 
 /// Contiguous forested intervals along a path plus their total depth.
-/// `ForestRun.t_start/t_end` are fractional (0..1); `len_m` is the interval
-/// length in metres. Matches `vegetation_run_length`'s ≥10 m run threshold,
-/// computed in a single pass so callers don't walk the path twice.
+/// `ForestRun.t_start/t_end` are fractional (0..1); `len_m` is the run's
+/// DENSITY-WEIGHTED depth in metres (geodata-v2 2a: `Σ len × v/100` — equal
+/// to the physical extent on binary rasters, the effective foliage metres
+/// once continuous density tiles land; the frontend renders only the total
+/// depth + run count and draws tufts from raw `forest_u8` samples — no
+/// consumer reads `len_m` as geometry; gates stay `> 0`). The ≥10 m scattered-tree gate
+/// stays on the PHYSICAL extent — the same threshold, mirror and parity
+/// contract as `vegetation_run_length`; single pass so callers don't walk
+/// the path twice.
 pub fn vegetation_runs_and_depth(t: &[f64], forest: &[u8], dist_m: f64) -> (Vec<ForestRun>, f64) {
     if t.len() < 2 || forest.len() < 2 {
         return (Vec::new(), 0.0);
@@ -125,37 +131,40 @@ pub fn vegetation_runs_and_depth(t: &[f64], forest: &[u8], dist_m: f64) -> (Vec<
     let mut runs = Vec::new();
     let mut total_depth = 0.0;
     let mut run_start_t: Option<f64> = None;
-    let mut run_len = 0.0;
+    let mut run_phys = 0.0;
+    let mut run_weighted = 0.0;
     for i in 1..t.len() {
         let len = (t[i] - t[i - 1]) * dist_m;
         if forest[i] > 0 {
             if run_start_t.is_none() {
                 run_start_t = Some(t[i - 1]);
             }
-            run_len += len;
+            run_phys += len;
+            run_weighted += len * (forest[i] as f64 / 100.0);
         } else {
-            if run_len >= 10.0 {
+            if run_phys >= 10.0 {
                 if let Some(start) = run_start_t {
                     runs.push(ForestRun {
                         t_start: start,
                         t_end: t[i - 1],
-                        len_m: run_len,
+                        len_m: run_weighted,
                     });
-                    total_depth += run_len;
+                    total_depth += run_weighted;
                 }
             }
             run_start_t = None;
-            run_len = 0.0;
+            run_phys = 0.0;
+            run_weighted = 0.0;
         }
     }
-    if run_len >= 10.0 {
+    if run_phys >= 10.0 {
         if let Some(start) = run_start_t {
             runs.push(ForestRun {
                 t_start: start,
                 t_end: t[t.len() - 1],
-                len_m: run_len,
+                len_m: run_weighted,
             });
-            total_depth += run_len;
+            total_depth += run_weighted;
         }
     }
     (runs, total_depth)
@@ -675,5 +684,29 @@ mod tests {
     #[test]
     fn ground_trace_shape() {
         assert_bands_no_scalar(&ground_trace(0.5));
+    }
+
+    /// The popup trace accumulator mirrors `vegetation_run_length` exactly:
+    /// total depth equal on binary AND continuous inputs, and each run's
+    /// `len_m` carries the density-weighted depth (physical geometry stays
+    /// in t_start/t_end).
+    #[test]
+    fn vegetation_runs_mirror_run_length() {
+        use crate::propagation::path_profile::vegetation_run_length;
+        let t: Vec<f64> = (0..=10).map(|i| i as f64 / 10.0).collect();
+        for vals in [
+            vec![0u8, 100, 100, 0, 0, 100, 100, 100, 0, 40, 40],
+            vec![0u8, 40, 40, 40, 0, 0, 100, 0, 0, 0, 0],
+        ] {
+            let (runs, depth) = vegetation_runs_and_depth(&t, &vals, 2000.0);
+            let expected = vegetation_run_length(&t, &vals, 2000.0);
+            // identical arithmetic in identical order ⇒ bit-equal, not just close
+            assert!(
+                depth == expected,
+                "trace depth {depth} != kernel depth {expected}"
+            );
+            let sum: f64 = runs.iter().map(|r| r.len_m).sum();
+            assert!(sum == depth);
+        }
     }
 }
