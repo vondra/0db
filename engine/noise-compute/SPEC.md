@@ -66,7 +66,7 @@ OSM `maxspeed` is parsed unit-aware at extract (`osm-extract::classify::parse_ma
 
 **Untagged maxspeed (0)** first passes through the R7 `speed_taper` (a graded
 effective speed from the road class and geometry, `normalize/road.rs`), then
-resolves through the country's LEGAL implicit limit before the world table (`defaults.rs::resolve_speed_default`, table generated from the OSM-wiki legal-defaults dataset — `scripts/gen-country-speed-defaults-rs.mjs`): class 0 → motorway, 1 → motorroad-else-rural, 2/3/4/9 → urban/rural by the `built_up` roads.arrow column (building-raster sample at the segment midpoint; 0 = unknown → skip to the world table, never guessed rural). Local classes 5-8 and links 10-12 stay on the world table by design — a national urban limit would overstate them by +20-30 km/h (/gg 2026-07-03). Rationale: one global default (50) painted a ±5-6 dB colour seam at every tagged/untagged boundary mid-road (Wetherby A168 case, task #15); the receiver-country approximation at borders is the same one the AADT cascade makes.
+resolves through the country's LEGAL implicit limit before the world table (`defaults.rs::resolve_speed_default`, table generated from the OSM-wiki legal-defaults dataset — `scripts/gen-country-speed-defaults-rs.mjs`): class 0 → motorway, 1 → motorroad-else-rural, 2/3/4/9 → urban/rural by the `built_up` roads.arrow column (building-raster sample at the segment midpoint; 0 = unknown → skip to the world table, never guessed rural). Local classes 5-8 and links 10-12 stay on the world table by design — a national urban limit would overstate them by +20-30 km/h (/gg 2026-07-03). Rationale: one global default (50) painted a ±5-6 dB colour seam at every tagged/untagged boundary mid-road (Wetherby A168 case, task #15). **Country comes from the segment itself wherever the M3 bake has run** (`country_iso`/`city_id`/`continent` columns): absent columns keep the old receiver-country approximation at borders; a baked `00` resolves `Admin::UNKNOWN` (WORLD), never the receiver's country.
 
 ### Rolling noise per band (CNOSSOS-EU §2.4.6)
 ```
@@ -171,8 +171,10 @@ alike — the cause of rail `L_night` always being exactly `Lden − 7.91 dB`
 EU freight is measured-derived from EP IPOL-TRAN ET(2012)474533 Table 22
 (Rheintalbahn 129 day-trains / 155 night-trains), corroborated by EBA
 Lärm-Monitoring 2023; "EU" is a 30-country ISO whitelist (EU27 + CH/NO/GB)
-keyed on country code — NOT geographic Europe — resolved per row via the
-process-wide `h3r4-admin.bin` table (`admin.rs::admin_for_latlng`). All
+keyed on country code — NOT geographic Europe. The ISO comes from the
+segment's own baked `country_iso` when present (M3/M5), else from the
+process-wide `h3r4-admin.bin` table (`admin.rs::admin_for_latlng`); a baked
+`00` resolves non-EU (WORLD split), never the receiver's country. All
 three consumers — popup kernel (`compute/railways.rs`), heatmap loader
 (`normalize/rail.rs`), and the reach solver — iterate one shared
 `RailTimeDist::periods()`, so the share model cannot fork.
