@@ -472,7 +472,7 @@
   "lat": 47.61625,
   "lng": -122.32888,
   "mode": "source:road",
-  "host": "full-tree-only",
+  "host": "he84-only",
   "anchor_type": "regression",
   "role": "regression",
   "tags": [
@@ -1976,7 +1976,7 @@
   "lat": 37.565,
   "lng": -122.253,
   "mode": "source:aircraft",
-  "host": "full-tree-only",
+  "host": "he84-only",
   "anchor_type": "measurement",
   "role": "diagnostic",
   "tags": [
@@ -2014,7 +2014,7 @@
   "lat": 37.658,
   "lng": -122.481,
   "mode": "source:aircraft",
-  "host": "full-tree-only",
+  "host": "he84-only",
   "anchor_type": "measurement",
   "role": "regression",
   "tags": [
@@ -2497,5 +2497,98 @@
    33.66
   ],
   "tolerance_note": "EXTERNAL-GAP: known undercount — OSM building typing sparse in rural TH + building-only trip model misses through-traffic (plan trip-generators Phase 2). Band pins the 2026-07-17 computed 31.66 dB; owner observation kept as the accuracy worklist marker."
+ },
+ {
+  "id": "air_es_lapalma_quiet",
+  "lat": 28.705,
+  "lng": -17.9349,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "regional_airport",
+   "rural_open",
+   "mountain_valley"
+  ],
+  "external": {
+   "value": "owner field observation 2026-07: quietest place visited; popup 500 during the 2026-07-18→27 stale-shards incident (mixed sample_days_by_class)",
+   "metric": "stamp-consistency smoke anchor — an HTTP 500 here means mixed aircraft shards again",
+   "year": 2026,
+   "url": null,
+   "months_covered": null,
+   "annualization_method": "n/a (model-state pin, not an external measurement)",
+   "band": null
+  },
+  "regression_band": [
+   30.0,
+   36.0
+  ],
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
+  },
+  "tolerance_note": "computed 33.26 dB on 2026-07-28 (post-fix, deterministic across restarts); band ±3 dB pins the current quiet state — its real role is the smoke probe: any mixed-stamp state 500s the query and fails the run."
+ },
+ {
+  "id": "air_ca_hudsonbay_remote",
+  "lat": 55.99,
+  "lng": -74.34,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "cruise_remote"
+  ],
+  "external": {
+   "value": "cell 840e093ffffffff was airborne-stale (365 vs 364) in the 2026-07-18 incident — its single stale row came from a corrupted old ingest track (N734CA) and was removed 2026-07-28",
+   "metric": "stamp-consistency smoke anchor — an HTTP 500 here means mixed aircraft shards again",
+   "year": 2026,
+   "url": null,
+   "months_covered": null,
+   "annualization_method": "n/a (model-state pin, not an external measurement)",
+   "band": null
+  },
+  "regression_band": [
+   7.0,
+   14.0
+  ],
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
+  },
+  "tolerance_note": "computed 10.64 dB on 2026-07-28 (post-fix; aircraft-only residual). Band ±3 dB; smoke probe for the airborne-stale cell class."
+ },
+ {
+  "id": "air_se_sweden_aptt",
+  "lat": 62.83,
+  "lng": 14.77,
+  "mode": "source:aircraft",
+  "host": "any",
+  "anchor_type": "regression",
+  "role": "regression",
+  "tags": [
+   "regional_airport",
+   "rural_open"
+  ],
+  "external": {
+   "value": "cell 8408137ffffffff was airport_traffic-stale (365 vs 364) in the 2026-07-18 incident; removed 2026-07-28",
+   "metric": "stamp-consistency smoke anchor — an HTTP 500 here means mixed aircraft shards again",
+   "year": 2026,
+   "url": null,
+   "months_covered": null,
+   "annualization_method": "n/a (model-state pin, not an external measurement)",
+   "band": null
+  },
+  "regression_band": [
+   21.0,
+   27.0
+  ],
+  "commensurability": {
+   "metric_variant": "input_data",
+   "dominance": "near_source"
+  },
+  "tolerance_note": "computed 24.13 dB on 2026-07-28 (post-fix). Band ±3 dB; smoke probe for the airport_traffic-stale cell class."
  }
 ]
