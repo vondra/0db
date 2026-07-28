@@ -891,10 +891,10 @@
    "dominance": "total_ambient"
   },
   "regression_band": [
-   45.9,
-   49.9
+   40.3,
+   44.3
   ],
-  "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred.",
+  "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred. ; re-pinned 2026-07-28 at the FAVOURABLE_MIXING flip to the live mixed value (42.31 ±2) — the earlier post-C7 band was aspirational, not live state",
   "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
  },
  {
@@ -1041,10 +1041,10 @@
    "dominance": "near_source"
   },
   "regression_band": [
-   41.4,
-   45.4
+   39.3,
+   43.3
   ],
-  "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds)",
+  "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds) ; re-pinned 2026-07-28 at the FAVOURABLE_MIXING flip to the live mixed value (41.29 ±2) — the earlier post-C7 band was aspirational, not live state",
   "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"
  },
  {
