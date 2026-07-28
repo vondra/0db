@@ -380,9 +380,9 @@ pub fn run(
     let rcv_alt = receiver.altitude_m();
     // Urban-reflection boost is a receiver-only property — same value
     // across every microsegment for this popup. Sample once and reuse
-    // in both the hot loop and the segment-trace emission. Still the
-    // RASTER probe even in vector mode — the popup-wide vector
-    // enclosure swap is plan 1.4b, one site for every popup kernel.
+    // in both the hot loop and the segment-trace emission. In vector
+    // mode the sampler is the 1.4b wrapper (VectorReflectionSampler),
+    // so this probe answers from exact footprints like every kernel.
     let refl_db = rasters.building_enclosure(recv_lat, recv_lon);
     // Heatmap-parity divergence floor: the user reads popup numbers
     // off a z=13 HM3 pixel, so the popup uses the same half-pixel
@@ -427,10 +427,10 @@ pub fn run(
             continue;
         }
         // A_refl reuses the per-receiver value sampled once above —
-        // CNOSSOS-EU §2.5 multi-bounce approximation. Identical to what
-        // road / rail apply at `lib.rs:282` and `:947`. The
-        // `building_enclosure` raster already returns the boost clamped
-        // at the contract ceiling (≤ 5 dB).
+        // CNOSSOS-EU §2.5 multi-bounce approximation, the same
+        // sampler-backed 0/1.5/3 dB receiver value every surface kernel
+        // applies (SPEC §3.8; raster probe, or exact footprints under
+        // the 1.4b wrapper).
 
         // Per-microsegment path effects, cached. Apply at ALL
         // distances inside the per-ops_kind reach (5/3/1.5 km) — same

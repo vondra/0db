@@ -354,8 +354,10 @@ against the obstacle store (`obstacle_index::enclosure_db`) instead of a
 receiver (`tile-painter::surface_region`); semantics at footprint EDGES
 differ from the raster by up to one occupancy step — a deliberate,
 flag-scoped representation change, quantified in the 1.9 A/B gate. The
-POPUP still reads the raster probe in vector mode until the popup-wide
-reflection swap (plan 1.4b). The GPU line lane mirrors the CPU
+POPUP swaps the probe with the store too (1.4b:
+`VectorReflectionSampler` wraps the raster sampler once per query, so
+every popup kernel — roads, rail, points, airport ground — reads the
+same vector enclosure). The GPU line lane mirrors the CPU
 (scatter.cu obstacle-candidate DDA + `single_edge_bands_cand`; the host
 pre-bakes vector `rx_refl` before upload) with two BOUNDED deviations
 documented at the kernel: ulp-level winner ties at f64-equal δ, and vertex

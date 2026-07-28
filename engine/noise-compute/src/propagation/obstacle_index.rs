@@ -438,6 +438,57 @@ pub fn vector_buildings_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("QM_VECTOR_BUILDINGS").is_ok_and(|v| v == "1"))
 }
 
+/// [`RasterSampler`] wrapper that swaps ONLY the receiver reflection probe
+/// for the vector enclosure (plan 1.4b — the popup twin of the pipeline's
+/// `rx_refl` pre-bake): `building_enclosure` answers from exact footprints
+/// via [`enclosure_db`], every other lookup delegates to the raster sampler
+/// unchanged. Wrapping at the sampler keeps ALL popup kernels (roads, rail,
+/// points, airport ground) on one reflection source with zero signature
+/// churn — SPEC §3.8 semantics on both paths.
+pub struct VectorReflectionSampler<'a> {
+    pub inner: &'a dyn crate::types::RasterSampler,
+    pub set: &'a ObstacleSet,
+}
+
+impl crate::types::RasterSampler for VectorReflectionSampler<'_> {
+    fn elevation(&self, lat: f64, lon: f64) -> f64 {
+        self.inner.elevation(lat, lon)
+    }
+    fn building_height(&self, lat: f64, lon: f64) -> f64 {
+        self.inner.building_height(lat, lon)
+    }
+    fn ground_g(&self, lat: f64, lon: f64) -> f64 {
+        self.inner.ground_g(lat, lon)
+    }
+    fn building_enclosure(&self, lat: f64, lon: f64) -> f64 {
+        enclosure_db(self.set, lat, lon, crate::constants::ENCLOSURE_RADIUS_M)
+    }
+    fn build_path_profile(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        out: &mut crate::propagation::PathProfile,
+    ) {
+        self.inner
+            .build_path_profile(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, out)
+    }
+    fn max_building_along_path(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        dist_m: f64,
+        excl_start_m: f64,
+    ) -> (f64, f64) {
+        self.inner
+            .max_building_along_path(src_lat, src_lon, rcv_lat, rcv_lon, dist_m, excl_start_m)
+    }
+}
+
 /// Chainage of the intersection of ray `(sx,sy)+t·(dx,dy)` with segment
 /// `(x0,y0)–(x1,y1)`, if any, with `t` strictly inside `(0, 1)` and the hit
 /// strictly inside the segment (`u ∈ [0, 1]`). Standard 2D cross-product
@@ -1160,5 +1211,77 @@ mod tests {
         assert!(!idx.contains_built(alat, wlon, 5.0, &mut sc));
         let (ilat, ilon) = ll(0.0, 20.0);
         assert!(idx.contains_built(ilat, ilon, 5.0, &mut sc), "interior");
+    }
+
+    /// 1.4b wrapper: `building_enclosure` answers from the store, every
+    /// other lookup delegates to the wrapped sampler unchanged.
+    #[test]
+    fn vector_reflection_sampler_overrides_only_enclosure() {
+        use crate::types::RasterSampler;
+        struct Flat;
+        impl RasterSampler for Flat {
+            fn elevation(&self, _: f64, _: f64) -> f64 {
+                123.0
+            }
+            fn building_height(&self, _: f64, _: f64) -> f64 {
+                7.0
+            }
+            fn ground_g(&self, _: f64, _: f64) -> f64 {
+                0.25
+            }
+            fn building_enclosure(&self, _: f64, _: f64) -> f64 {
+                99.0 // sentinel: must never surface through the wrapper
+            }
+            fn build_path_profile(
+                &self,
+                _: f64,
+                _: f64,
+                _: f64,
+                _: f64,
+                dist_m: f64,
+                out: &mut crate::propagation::PathProfile,
+            ) {
+                // sentinel override: dist_m must round-trip through the
+                // wrapper's forwarder (a dropped forwarder would fall back
+                // to the trait default and lose the inner override).
+                out.dist_m = dist_m * 2.0;
+            }
+            fn max_building_along_path(
+                &self,
+                _: f64,
+                _: f64,
+                _: f64,
+                _: f64,
+                _: f64,
+                _: f64,
+            ) -> (f64, f64) {
+                (42.0, 0.5)
+            }
+        }
+        // Dense block around the origin ⇒ all nine probes inside ⇒ 3 dB.
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 200.0), 12.0, ObstacleKind::Building, 0);
+        let set = ObstacleSet {
+            indexes: vec![std::sync::Arc::new(b.build())],
+        };
+        let w = VectorReflectionSampler {
+            inner: &Flat,
+            set: &set,
+        };
+        assert_eq!(w.elevation(OLAT, OLON), 123.0);
+        assert_eq!(w.building_height(OLAT, OLON), 7.0);
+        assert_eq!(w.ground_g(OLAT, OLON), 0.25);
+        assert_eq!(w.building_enclosure(OLAT, OLON), 3.0);
+        let (far_lat, far_lon) = ll(5_000.0, 5_000.0);
+        assert_eq!(w.building_enclosure(far_lat, far_lon), 0.0);
+        // The two defaultable methods must forward to the INNER override,
+        // not fall back to the trait default (gg review 1.4b #1).
+        let mut prof = crate::propagation::PathProfile::new();
+        w.build_path_profile(OLAT, OLON, OLAT, OLON, 100.0, &mut prof);
+        assert_eq!(prof.dist_m, 200.0);
+        assert_eq!(
+            w.max_building_along_path(OLAT, OLON, OLAT, OLON, 100.0, 0.0),
+            (42.0, 0.5)
+        );
     }
 }

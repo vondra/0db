@@ -380,6 +380,19 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     } else {
         None
     };
+    // 1.4b: with a loaded store, the receiver reflection probe answers from
+    // exact footprints too (the popup twin of the pipeline rx_refl pre-bake)
+    // — one wrapped sampler serves EVERY popup kernel, raster otherwise.
+    let vector_refl = obstacle_set.as_ref().map(|set| {
+        noise_compute::propagation::obstacle_index::VectorReflectionSampler {
+            inner: rasters,
+            set,
+        }
+    });
+    let rasters: &dyn noise_compute::types::RasterSampler = match &vector_refl {
+        Some(w) => w,
+        None => rasters,
+    };
 
     let mut traces = noise_compute::types::TraceCollector::new();
     // M4/M5: hand the per-row baked admins to the kernels through their
