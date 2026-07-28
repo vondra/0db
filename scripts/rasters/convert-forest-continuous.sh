@@ -7,8 +7,12 @@
 # byte-compatible with the binary tree it will replace at the Wave-1 swap.
 #
 #   scripts/rasters/convert-forest-continuous.sh N50E014 [N49E014 ...]
-#   scripts/rasters/convert-forest-continuous.sh --all   # every tile with a
-#                                                        # binary forest tile
+#   scripts/rasters/convert-forest-continuous.sh --all         # binary-tree census
+#   scripts/rasters/convert-forest-continuous.sh --list FILE   # tiles from FILE
+#
+# ONE process owns the shared VRT builds — never run multiple instances
+# concurrently (parallelism happens INSIDE via xargs; concurrent instances
+# would race on rebuilding the same .vrt files).
 #
 # STAGING output: data/enrichment/global/forest-continuous/<TILE>.raw — the
 # live prepared/rasters/forest tree is untouched; Wave 1 swaps the whole tree
@@ -96,12 +100,20 @@ PYEOF
 export -f convert_one
 export TCD_VRT TC_VRT LY_VRT OUT_DIR GRID
 
+run_list() {
+    local list="$1"
+    local total
+    total=$(wc -l < "$list")
+    echo "[forest-cont] converting $total tiles"
+    xargs -P "$(nproc --ignore=8)" -I{} bash -c 'convert_one "$1"' _ {} < "$list"
+    echo "[forest-cont] finished: $(ls "$OUT_DIR"/*.raw | wc -l) staged ($total requested)"
+}
+
 if [ "${1:-}" = "--all" ]; then
     ls "$CENSUS"/*.raw | sed 's/.*\///; s/\.raw$//' | sort > /tmp/forest-cont-tiles.txt
-    total=$(wc -l < /tmp/forest-cont-tiles.txt)
-    echo "[forest-cont] converting $total tiles (binary-tree census)"
-    xargs -P "$(nproc --ignore=8)" -I{} bash -c 'convert_one "$1"' _ {} < /tmp/forest-cont-tiles.txt
-    echo "[forest-cont] finished: $(ls "$OUT_DIR"/*.raw | wc -l)/$total"
+    run_list /tmp/forest-cont-tiles.txt
+elif [ "${1:-}" = "--list" ]; then
+    run_list "$2"
 else
     for tile in "$@"; do convert_one "$tile"; done
 fi
