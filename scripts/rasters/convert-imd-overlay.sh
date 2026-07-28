@@ -9,7 +9,10 @@ IMD_DST="data/prepared/rasters/imd"
 
 # Find all available Copernicus IMD source files
 IMD_SOURCES=()
-for f in data/source/imd/2018/*.tif data/source/imd/2021/*.tif; do
+# Ascending years: gdalbuildvrt paints later files over earlier, so the
+# newest release wins where coverage overlaps (2024 = EU-wide HRL VLCC,
+# geodata-v2 2b; 2018/2021 remain as the CZ-era fallback).
+for f in data/source/imd/2018/*.tif data/source/imd/2021/*.tif data/source/imd/2024/*.tif; do
     [ -f "$f" ] && IMD_SOURCES+=("$f")
 done
 
