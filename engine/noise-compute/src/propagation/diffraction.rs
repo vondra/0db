@@ -399,15 +399,14 @@ mod tests {
         assert!((mh[0] - (fav[0] + 2.61)).abs() < 0.05, "got {:.3}", mh[0]);
     }
 
-    /// Flag OFF (the shipped state): the public band function must be
-    /// bit-identical to the pure homogeneous Maekawa — the merge changes
-    /// nothing until the plan's gates pass and the flag flips.
-    // The constant assert is the point: whoever flips FAVOURABLE_MIXING must
-    // consciously rewrite this test as part of the plan's flip commit.
+    /// Flag ON (the shipped state since the 2026-07-28 flip): the public band
+    /// function must equal the explicit favourable/homogeneous mix. The
+    /// constant assert forces whoever flips the flag again to rewrite this
+    /// test consciously (the OFF-era twin did the same job in reverse).
     #[allow(clippy::assertions_on_constants)]
     #[test]
-    fn flag_off_is_bit_identical_to_homogeneous() {
-        assert!(!FAVOURABLE_MIXING, "Phase 1 ships with the flag OFF");
+    fn flag_on_matches_explicit_mix() {
+        assert!(FAVOURABLE_MIXING, "shipped state is ON (flip 2026-07-28)");
         let r = DiffractionResult {
             delta: 0.7,
             delta_fav: -0.1,
@@ -417,7 +416,8 @@ mod tests {
         };
         let public = diffraction_attenuation_rayleigh(&r);
         let hom = maekawa_bands(r.delta, r.delta_star);
-        assert_eq!(public, hom);
+        let fav = maekawa_bands(r.delta_fav, r.delta_star);
+        assert_eq!(public, mix_fav_hom(&hom, &fav, P_FAV));
     }
 
     /// Mixed attenuation is never above homogeneous and never below favourable

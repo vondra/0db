@@ -33,7 +33,7 @@ __constant__ double LDEN_W[3]     = {12.0, 12.649110640673518, 80.0};  // 4·√
 // CPU≡GPU parity (the plan's G6 gate) — a one-sided flip silently forks the
 // physics between lanes.
 #define P_FAV 0.5
-#define FAVOURABLE_MIXING 0
+#define FAVOURABLE_MIXING 1
 #define FAV_GAMMA_MIN 1000.0
 #define FAV_GAMMA_PER_DSR 8.0
 #define CELL_M (110540.0/3600.0) // mirror of path_profile::CELL_M (M_PER_DEG_LAT/3600)

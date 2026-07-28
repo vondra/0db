@@ -195,8 +195,11 @@ mod tests {
         let t: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
         let (atten, _) = single_edge_atten(&t, &bare, &bare, 1850.0, 0.05, 4.0);
         assert_eq!(atten[0], 0.0, "63 Hz must be gated by δ*");
+        // Re-pinned at the 2026-07-28 FAVOURABLE_MIXING flip: the mixed band
+        // sits at ~2.8 (homogeneous-only was ~5.6) — the gate asymmetry
+        // (63 Hz zeroed, 1 kHz passing) is the invariant, not the magnitude.
         assert!(
-            atten[4] > 5.0,
+            atten[4] > 2.0,
             "1 kHz should pass the gate, got {:.3}",
             atten[4]
         );

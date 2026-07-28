@@ -39,12 +39,14 @@ pub const P_FAV: f64 = 0.5;
 
 /// Master switch for CNOSSOS long-term favourable/homogeneous mixing
 /// (2015/996 formulas (2.5.9), (2.5.24), (2.5.25)); see
-/// docs/dev/favourable-propagation-plan.md (0db-private). OFF until the
-/// plan's G1–G6 gates pass: flipping it raises every terrain/building
-/// screened receiver (the mixture leans to the louder favourable state),
-/// so it ships together with the surface-layer OUTPUT_VER bump and a world
-/// repaint — never alone.
-pub const FAVOURABLE_MIXING: bool = false;
+/// docs/dev/favourable-propagation-plan.md (0db-private). FLIPPED ON
+/// 2026-07-28 after the plan's gates passed (G3: 7 anchors moved toward
+/// external truth, none regressed beyond pre-existing near-barrier
+/// overshoots; G6: r9950 gate pass, drift mean 0.004 dB). Flipping raises
+/// every terrain/building screened receiver, so any future change here
+/// travels with a surface-layer OUTPUT_VER bump + world repaint + the
+/// scatter.cu #define mirror — never alone.
+pub const FAVOURABLE_MIXING: bool = true;
 
 /// CNOSSOS-EU (2.5.24) favourable-ray curvature Γ = max(Γ_MIN, Γ_PER_DSR·d),
 /// d = slant source→receiver distance (review-pinned reading).

@@ -116,8 +116,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   66.1,
-   70.1
+   66.5,
+   70.5
   ],
   "tolerance_note": "audit model 65.5, Δ +0.5..+5.5 mildly hot off-axis (road-report §C2); band = SHM band ∪ audit model +2.5 | v2 2026-07-09: live 68.10 = +3.1 above SHM top (audit was +0.5..+5.5 off-axis hot) -> tracked as EXTERNAL-GAP; band=live +/-2",
   "caveats": "SHM grid/ground handling differs off-axis"
@@ -250,8 +250,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   65.96,
-   69.96
+   68.1,
+   72.1
   ],
   "known_gap": "road-R26-missing-barrier-data",
   "tolerance_note": "audit model 66.9 (+9.7): no noise barriers in our data (8 segments in the whole NW-London hex) + 30 m DEM smooths the cutting (road-report R26); band = Defra ±3; heals only via barrier-data import (backlog F4), not B8 code wiring | v2 2026-07-09: band=live 67.96 +/-2; Defra pixel stays external.band -> +8.8 EXTERNAL-GAP until barrier-data import (backlog F4)",
@@ -340,8 +340,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   55.57,
-   59.57
+   56.7,
+   60.7
   ],
   "tolerance_note": "audit model 58.4 (−0.6..−5.6) — buildings screen correctly here (road-report §C2); band = audit model −2.4 → external top | v2 2026-07-09: band=live 57.57 +/-2; -1.4 below Umweltatlas band shows as EXTERNAL-GAP",
   "caveats": "nearby Bornstedter Str. mis-snap row (R25) inflates the local road field"
@@ -541,8 +541,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   51.71,
-   55.71
+   53.2,
+   57.2
   ],
   "known_gap": "rail-freight-R1R2",
   "tolerance_note": "freight absent (rail R1+R2) → known cold −6..−11; audit model 53.9; live 51.65 after the 2026-06-10 family-aware rail re-run sync | v2 2026-07-09: band=live 53.71 +/-2; freight gap -6..-11 visible as EXTERNAL-GAP",
@@ -586,8 +586,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   66.08,
-   70.08
+   67.6,
+   71.6
   ],
   "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
   "tolerance_note": "audit model 71.0 (+1..+6 hot — pre-retrofit freight spectrum R9); live 67.0 after the 2026-06-10 rail re-run sync; band = SHM band ∪ audit model +2 | v2 2026-07-09: band=live 68.08 +/-2 (inside SHM band)",
@@ -633,8 +633,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   45.61,
-   49.61
+   47.6,
+   51.6
   ],
   "known_gap": "rail-freight-R2",
   "tolerance_note": "Lden in band (audit 45.2, live 45.19); the audit's Ln −8..−13 cold is the R1 night-split signature — invisible in Lden mode; band = audit ±2 capped at SHM <50 | C1 (2026-06-12) shipped the R1 night split: Ln 37.3->41.5 (SHM 45-50); the remaining ~4 dB needs R2 measured freight counts. | v2 2026-07-09: band=live 47.61 +/-2 (inside SHM <50)",
@@ -678,8 +678,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   45.4,
-   49.4
+   51.4,
+   55.4
   ],
   "known_gap": "industrial-distance-tail-underdecay",
   "tolerance_note": "v3 2026-07-13 (Wave 2): re-banded to live 47.4 (C1 +5.4 landed; Fix B did NOT move this pixel — its industrial is small local sites, not the steelworks). CORRECTION of the old '-28 area-cap emission gap': Wave 2 multi-country guards proved the Nova hut steelworks NEAR-FIELD now MATCHES official maps (NL Tata 65.9 vs 65, DE Duisburg 57.2 vs 60, CZ Nova hut edge 63.8) after C1+FixB. This fixture sits ~3 km from Nova hut in a mixed small-industry area, so its 47.4-vs-SHM-70/75 gap is NOT emission mis-calibration — it is (a) fixture placement (popup aggregate here != the steelworks) and (b) the distance-tail under-decay common to all official END maps (our ISO 9613-2 field falls off faster than END favorable-propagation beyond ~1.5 km). Cranking base_lw to close it would over-predict the near-field (see ind_tata_ijmuiden_velsen 65.9 vs 65). Remaining EXTERNAL-GAP driver = the distance tail, a propagation question, not I-04.",
@@ -856,8 +856,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   40.6,
-   44.6
+   46.0,
+   50.0
   ],
   "known_gap": "industrial-I18-quarry-emission-floor",
   "tolerance_note": "band = measured 52.5 day → Lden via the audit's quarry-profile offset −1.6 (industrial-report §G item 7) ≈ 50.9 ±2; audit quarry contributor 39.4 (−11, I-18); live industrial source 42.6; C7 (B4+B6) deepens by ~−4.9 (quarry spectrum normalization) by design | v2 2026-07-09: band=live 37.47 +/-2 (post-C7 quarry spectrum state); measured target stays external.band -> EXTERNAL-GAP -11.4 (I-18 emission floor)",
@@ -891,8 +891,8 @@
    "dominance": "total_ambient"
   },
   "regression_band": [
-   39.4,
-   43.4
+   45.9,
+   49.9
   ],
   "tolerance_note": "band = post-C7 (B4+B6) expectation 36.9 ±2: pre-C7 audit model 42.4 + spectrum normalization −5.4..−5.7 across the village-site mix (NPP 3511 = −5.65); → Lday ≈ 31.5 vs measured 33.9, slightly cold post-fix. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 35.82 +/-2 (post-C7 state inside the old post-C7 expectation band) | v3 2026-07-13 (Wave 2): re-banded to live 41.4 (C1 +5.6 landed uniformly). This now reads +7.5 OVER the 33.9 LAeq measurement — a KNOWN over-prediction from the NPP polygon double-count (I-07) compounded by C1, NOT a calibration signal (0-month LAeq spot, SSOT-barred). Fix I-07 (MultiPolygon dedup), not base_lw, is the lever. Flagged, deferred.",
   "caveats": "industrial total dominated by small village sites, not the NPP; NPP polygon double-counted (I-07)"
@@ -932,8 +932,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   27.6,
-   31.6
+   34.5,
+   38.5
   ],
   "known_gap": "industrial-I02-multipolygon-extraction",
   "tolerance_note": "Spolana (~1 km² chemical plant) is entirely absent from arrows — multi-outer relation dropped at extraction (I-02); audit model 30.4 comes from OTHER sites; band = audit's plausible real range; heals at re-extract with MultiPolygon WKB | v2 2026-07-09: band=live 23.10 +/-2; I-02 multipolygon absence visible as EXTERNAL-GAP -16.9; NOTE the 2026 re-extract did NOT close I-02 -- verify the MultiPolygon WKB fix ever shipped",
@@ -1005,8 +1005,8 @@
    "dominance": "near_source"
   },
   "regression_band": [
-   41.3,
-   45.3
+   41.7,
+   45.7
   ],
   "tolerance_note": "band = post-C7 (B4+B6) ledger 44 ±2: pre-C7 state 48.80 + turbine shift ≈ −5.5 (spectrum −6.41, LUT +1.0, hub ≈ −0.1) ≈ 43.3; IEC hand calc (§G.1) expects 44–45. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 43.14 +/-2 (IEC expectation 44-45 holds)",
   "caveats": "DK comparison point: our turbine-only Lp at ~500 m ≈ 41.3 dB(A) sits at the top of the measured envelope for a larger farm at 8 m/s"
@@ -1041,8 +1041,8 @@
    "dominance": "near_source"
   },
   "regression_band": [
-   37.2,
-   41.2
+   41.4,
+   45.4
   ],
   "tolerance_note": "band = post-C7 (B4+B6) ledger 38 ±2: pre-C7 state 42.92 + turbine shift ≈ −5.4 (spectrum −6.41, LUT +1.0); IEC hand calc (§G.1) expects 38–39. Valid only after the wave-end rebuild | v2 2026-07-09: band=live 37.12 +/-2 (IEC expectation 38-39 holds)",
   "caveats": "gap partially from the 'Býv. důl Theodor' site at 467 m (audit §G.1)"
@@ -2287,8 +2287,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   45.54,
-   49.54
+   47.1,
+   51.1
   ],
   "known_gap": "rail-freight-R1R2",
   "tolerance_note": "SHM Ln 60-65; C1 night split closes part of the gap, the rest needs R2 measured freight counts (plan C1 P3) | v2 2026-07-09: band=live 47.54 +/-2; night freight gap -12.5 below SHM Ln stays the loudest EXTERNAL-GAP in the set (R2 measured freight counts)",
@@ -2333,8 +2333,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   59.49,
-   63.49
+   60.5,
+   64.5
   ],
   "known_gap": "rail-R9-pre-retrofit-freight-spectrum",
   "tolerance_note": "SHM Ln 60-65; band per C1 plan §4 | v2 2026-07-09: band=live 61.49 +/-2 (inside SHM Ln band post-C1 night split)",
@@ -2381,8 +2381,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   39.5,
-   43.5
+   41.1,
+   45.1
   ],
   "known_gap": "rail-freight-R2",
   "tolerance_note": "SHM Ln 45-50; C1 plan §4 — clear/retag per live value | v2 2026-07-09: band=live 41.50 +/-2; -3.5 below SHM Ln = the R2 residual (C1 closed 37.3->41.5)",
@@ -2423,8 +2423,8 @@
    "correction_provenance": null
   },
   "regression_band": [
-   42.47,
-   46.47
+   42.8,
+   46.8
   ],
   "tolerance_note": "settlement v2 phase 1 (2026-06-12) landed the building source INSIDE the BS4142 practice band: 45.0 day / 35.0 night (was 40.7 / ~25 with the -20 night cut). Band = the practice range itself, not live+/-2. | v2 2026-07-09: band=live 44.47 +/-2; practice envelope stays external.band"
  },
@@ -2458,8 +2458,8 @@
    "dominance": "total_ambient"
   },
   "regression_band": [
-   40.82,
-   44.82
+   41.0,
+   45.0
   ],
   "known_gap": "building-phase2-classification",
   "tolerance_note": "phase 1 moved 25.1 -> 31.7 but the square's restaurants/shops are building=yes -> residential profile until the phase-2 POI join; band = post-phase-2 expectation. KNOWN-GAP until then. | v2 2026-07-09: band=live 42.82 +/-2 (phase-1 state; phase-2 POI join stays the kg)"
