@@ -60,6 +60,13 @@ pub struct ObstacleIndex {
     cell_starts: Vec<u32>,
     edge_refs: Vec<u32>,
     edges: Vec<ObstacleEdge>,
+    /// Per-footprint (id-indexed) min local x over all its rings — the
+    /// containment walk skips footprints whose bbox lies strictly east of the
+    /// probe. Requires DENSE ids (the loaders' sequential ordinals).
+    footprint_xmin: Vec<f32>,
+    /// Max per-footprint bbox width (m) — bounds the containment walk: a
+    /// footprint straddling the probe cannot extend further east than this.
+    max_footprint_w: f64,
 }
 
 /// Default grid pitch (m) — coarse enough that a 10 km ray walks ~160 cells.
@@ -107,6 +114,22 @@ impl ObstacleIndex {
         out: &mut Vec<CrossingCandidate>,
     ) {
         out.clear();
+        self.append_crossings(src_lat, src_lon, rcv_lat, rcv_lon, out);
+    }
+
+    /// [`Self::crossings`] without the clear: appends this index's hits and
+    /// sort+dedups ONLY the appended tail, so [`ObstacleSet`] can chain
+    /// per-cell indexes into one buffer with zero per-ray allocation (the
+    /// hot scatter loop runs this per receiver ray).
+    fn append_crossings(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        out: &mut Vec<CrossingCandidate>,
+    ) {
+        let start = out.len();
         if self.edges.is_empty() {
             return;
         }
@@ -201,12 +224,21 @@ impl ObstacleIndex {
                 break;
             }
         }
-        out.sort_unstable_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+        out[start..].sort_unstable_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
         // One candidate per (obstacle, chainage): kills ring-eviction repeats
         // (same edge ⇒ bit-identical t) and vertex double-counts (two edges of
         // one ring meeting at the hit point; tolerance covers their last-ulp
         // difference). A tangent ray thus yields ONE conservative candidate.
-        out.dedup_by(|a, b| a.id == b.id && (a.t - b.t).abs() < 1e-9);
+        // In-place tail dedup (slices have no `dedup_by`), keep-first.
+        let mut w = start;
+        for r in start..out.len() {
+            if w > start && out[r].id == out[w - 1].id && (out[r].t - out[w - 1].t).abs() < 1e-9 {
+                continue;
+            }
+            out[w] = out[r];
+            w += 1;
+        }
+        out.truncate(w);
     }
 }
 
@@ -234,12 +266,126 @@ impl ObstacleSet {
         out: &mut Vec<CrossingCandidate>,
     ) {
         out.clear();
-        let mut scratch = Vec::new();
         for idx in &self.indexes {
-            idx.crossings(src_lat, src_lon, rcv_lat, rcv_lon, &mut scratch);
-            out.extend_from_slice(&scratch);
+            idx.append_crossings(src_lat, src_lon, rcv_lat, rcv_lon, out);
         }
         out.sort_unstable_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+    }
+}
+
+impl ObstacleIndex {
+    /// Point-in-footprint test via PER-FOOTPRINT crossing parity along the
+    /// probe's eastward half-line: a point is inside footprint `id` iff that
+    /// footprint's boundary crosses the half-line an odd number of times
+    /// (holes share the outer ring's id, so courtyards read outside; a
+    /// global parity bit would break on overlapping footprints). Only
+    /// footprints with `height_m > min_height_m` count.
+    ///
+    /// Exactness (gg review 2026-07-28, both reviewers):
+    /// - Vertices use the classic half-open straddle rule
+    ///   `(y0 > y) != (y1 > y)` — the same convention as `wkb.rs`
+    ///   point-in-polygon: transit vertices count once, tangent vertices
+    ///   twice or zero, horizontal edges never. No epsilon, no dedup.
+    /// - An edge is listed in every row cell it passes; only the cell
+    ///   CONTAINING the crossing point counts it (owner-cell rule), so
+    ///   multi-cell edges cannot double-count.
+    /// - The walk is bounded by `max_footprint_w`, the max footprint bbox
+    ///   width IN THIS INDEX: any footprint whose bbox straddles the probe
+    ///   ends within that distance east, and footprints starting east of the
+    ///   probe (`footprint_xmin > x`) cannot contain it and are skipped —
+    ///   both false-positive (ray "ending inside" a far footprint) and
+    ///   false-negative (footprint wider than a fixed cast) failure modes of
+    ///   a constant-length ray are structurally impossible.
+    pub fn contains_built(
+        &self,
+        lat: f64,
+        lon: f64,
+        min_height_m: f32,
+        seen: &mut Vec<(u32, u32)>,
+    ) -> bool {
+        if self.edges.is_empty() {
+            return false;
+        }
+        let (x, y) = self.to_local(lat, lon);
+        // Bbox reject: a point outside this index's edge extent cannot be
+        // inside any footprint it owns — kills the ~7x wasted walks when a
+        // probe queries every ring cell's index.
+        let max_x = self.min_x + self.cols as f64 * self.cell_m;
+        let max_y = self.min_y + self.rows as f64 * self.cell_m;
+        if x < self.min_x || x > max_x || y < self.min_y || y > max_y {
+            return false;
+        }
+        seen.clear();
+        let inv_cell = 1.0 / self.cell_m;
+        let cy = (((y - self.min_y) * inv_cell).floor() as i64).clamp(0, self.rows as i64 - 1);
+        let mut cx = (((x - self.min_x) * inv_cell).floor() as i64).clamp(0, self.cols as i64 - 1);
+        let end_cx = (((x + self.max_footprint_w - self.min_x) * inv_cell).floor() as i64)
+            .clamp(0, self.cols as i64 - 1);
+        // Horizontal half-line ⇒ the walk stays on one row.
+        let row = cy as usize * self.cols;
+        while cx <= end_cx {
+            let cell_lo = self.min_x + cx as f64 * self.cell_m;
+            let cell_hi = cell_lo + self.cell_m;
+            let cell = row + cx as usize;
+            let lo = self.cell_starts[cell] as usize;
+            let hi = self.cell_starts[cell + 1] as usize;
+            for &eref in &self.edge_refs[lo..hi] {
+                let e = self.edges[eref as usize];
+                if e.height_m <= min_height_m {
+                    continue;
+                }
+                let (y0, y1) = (e.y0 as f64, e.y1 as f64);
+                if (y0 > y) == (y1 > y) {
+                    continue; // no straddle (also skips horizontal edges)
+                }
+                if (self.footprint_xmin[e.id as usize] as f64) > x {
+                    continue; // footprint entirely east of the probe
+                }
+                let (x0, x1) = (e.x0 as f64, e.x1 as f64);
+                let xc = x0 + (y - y0) * (x1 - x0) / (y1 - y0);
+                if xc > x && xc >= cell_lo && xc < cell_hi {
+                    match seen.iter_mut().find(|(id, _)| *id == e.id) {
+                        Some((_, n)) => *n += 1,
+                        None => seen.push((e.id, 1)),
+                    }
+                }
+            }
+            cx += 1;
+        }
+        seen.iter().any(|(_, n)| n % 2 == 1)
+    }
+}
+
+/// Receiver-local enclosure over a set of per-cell indexes — the vector twin
+/// of the raster 3×3 probe (`RealRasters::building_enclosure`): fraction of 9
+/// probe points at ±`ENCLOSURE`-metre offsets that sit inside a footprint
+/// taller than 5 m → 0 / 1.5 / 3 dB. Same thresholds, same footprint metric
+/// (a parcel split into several footprints cannot inflate it).
+pub fn enclosure_db(set: &ObstacleSet, lat: f64, lon: f64, radius_m: f64) -> f64 {
+    let step_lat = radius_m / M_PER_DEG_LAT;
+    let step_lon = radius_m / m_per_deg_lon(lat.to_radians());
+    let mut built = 0u32;
+    let mut scratch: Vec<(u32, u32)> = Vec::new();
+    for dr in [-1.0, 0.0, 1.0] {
+        for dc in [-1.0_f64, 0.0, 1.0] {
+            let plat = lat + dr * step_lat;
+            let plon = ((lon + dc * step_lon + 180.0).rem_euclid(360.0)) - 180.0;
+            if set
+                .indexes
+                .iter()
+                .any(|i| i.contains_built(plat, plon, 5.0, &mut scratch))
+            {
+                built += 1;
+            }
+        }
+    }
+    let density = built as f64 / 9.0;
+    if density > 0.5 {
+        3.0
+    } else if density > 0.2 {
+        1.5
+    } else {
+        0.0
     }
 }
 
@@ -397,8 +543,34 @@ impl Builder {
                 cell_starts: vec![0, 0],
                 edge_refs: Vec::new(),
                 edges: Vec::new(),
+                footprint_xmin: Vec::new(),
+                max_footprint_w: 0.0,
             };
         }
+        // Per-footprint bboxes for the containment walk (edges carry every
+        // ring vertex, so the per-id min/max over edge endpoints IS the
+        // union bbox of that id's rings). Dense-id contract: the loaders
+        // assign sequential ordinals; each footprint has ≥ 3 edges, so a
+        // sparse id space signals a broken caller, not big data.
+        let max_id = self.edges.iter().map(|e| e.id).max().unwrap() as usize;
+        assert!(
+            max_id < self.edges.len().saturating_mul(4) + 1024,
+            "obstacle ids must be dense loader ordinals (max id {max_id}, {} edges)",
+            self.edges.len()
+        );
+        let mut footprint_xmin = vec![f32::INFINITY; max_id + 1];
+        let mut footprint_xmax = vec![f32::NEG_INFINITY; max_id + 1];
+        for e in &self.edges {
+            let i = e.id as usize;
+            footprint_xmin[i] = footprint_xmin[i].min(e.x0).min(e.x1);
+            footprint_xmax[i] = footprint_xmax[i].max(e.x0).max(e.x1);
+        }
+        let max_footprint_w = footprint_xmin
+            .iter()
+            .zip(&footprint_xmax)
+            .map(|(lo, hi)| (hi - lo) as f64)
+            .fold(0.0, f64::max)
+            + cell_m; // one-cell slack so the owner cell of the last crossing is walked
         let cols = (((max_x - min_x) / cell_m).floor() as usize + 1).max(1);
         let rows = (((max_y - min_y) / cell_m).floor() as usize + 1).max(1);
 
@@ -443,6 +615,8 @@ impl Builder {
             cell_starts,
             edge_refs,
             edges: self.edges,
+            footprint_xmin,
+            max_footprint_w,
         }
     }
 }
@@ -792,5 +966,158 @@ mod tests {
         );
         let idx = b.build();
         assert_eq!(idx.edge_count(), 0);
+    }
+
+    /// Crossing-parity containment + the 9-probe enclosure thresholds.
+    #[test]
+    fn contains_and_enclosure_thresholds() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 60.0), 12.0, ObstacleKind::Building, 1);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        assert!(
+            idx.contains_built(OLAT, OLON, 5.0, &mut sc),
+            "centre is inside"
+        );
+        let (out_lat, out_lon) = ll(300.0, 0.0);
+        assert!(
+            !idx.contains_built(out_lat, out_lon, 5.0, &mut sc),
+            "outside"
+        );
+        assert!(
+            !idx.contains_built(OLAT, OLON, 20.0, &mut sc),
+            "min-height gate must exclude the 12 m footprint"
+        );
+
+        let set = ObstacleSet {
+            indexes: vec![std::sync::Arc::new(idx)],
+        };
+        // 60 m half-size square vs 75 m probes: only the centre probe is
+        // inside → density 1/9 → 0 dB.
+        assert_eq!(enclosure_db(&set, OLAT, OLON, 75.0), 0.0);
+
+        // A 200 m half-size block swallows all 9 probes → 3 dB.
+        let mut b2 = ObstacleIndex::builder(OLAT, OLON);
+        b2.add_ring(&square(0.0, 0.0, 200.0), 12.0, ObstacleKind::Building, 1);
+        let set2 = ObstacleSet {
+            indexes: vec![std::sync::Arc::new(b2.build())],
+        };
+        assert_eq!(enclosure_db(&set2, OLAT, OLON, 75.0), 3.0);
+    }
+
+    /// gg case: a point inside TWO overlapping tall footprints must read
+    /// inside (per-footprint parity — the old global bit XORed to false).
+    #[test]
+    fn overlapping_footprints_contain_correctly() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 50.0), 12.0, ObstacleKind::Building, 1);
+        b.add_ring(&square(20.0, 0.0, 50.0), 15.0, ObstacleKind::Building, 2);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        assert!(idx.contains_built(OLAT, OLON, 5.0, &mut sc), "inside both");
+        let (lat_e, lon_e) = ll(60.0, 0.0);
+        assert!(
+            idx.contains_built(lat_e, lon_e, 5.0, &mut sc),
+            "inside #2 only"
+        );
+        let (lat_o, lon_o) = ll(200.0, 0.0);
+        assert!(
+            !idx.contains_built(lat_o, lon_o, 5.0, &mut sc),
+            "outside both"
+        );
+    }
+
+    /// A probe exactly at a footprint's south-west corner latitude (the
+    /// horizontal parity ray grazes vertices) stays consistent: the
+    /// half-open vertex rule counts a transit vertex once.
+    #[test]
+    fn parity_ray_through_vertices_is_consistent() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(100.0, 0.0, 40.0), 10.0, ObstacleKind::Building, 1);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        // Probe WEST of the square at exactly the corner row (y = -40 m is a
+        // vertex latitude): the horizontal parity ray grazes both corners.
+        // OUTSIDE must stay outside despite the graze; a mid-edge-row probe
+        // west of the square is outside too; INSIDE stays inside.
+        let (corner_lat, west_lon) = (ll(0.0, -40.0).0, ll(-200.0, 0.0).1);
+        assert!(!idx.contains_built(corner_lat, west_lon, 5.0, &mut sc));
+        let (mid_lat, _unused) = ll(0.0, 0.0);
+        assert!(!idx.contains_built(mid_lat, west_lon, 5.0, &mut sc));
+        let (in_lat, in_lon) = (ll(100.0, -39.9).0, ll(100.0, 0.0).1);
+        assert!(idx.contains_built(in_lat, in_lon, 5.0, &mut sc));
+    }
+
+    /// gg case (Codex): a fixed-length cast could END inside a far footprint
+    /// and report a phantom "inside". The `footprint_xmin` skip makes a
+    /// footprint entirely east of the probe uncountable by construction.
+    #[test]
+    fn far_footprint_does_not_phantom_capture() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 20.0), 10.0, ObstacleKind::Building, 0);
+        // 800 m wide block whose interior would swallow a 2 km ray end.
+        b.add_ring(&square(1800.0, 0.0, 400.0), 10.0, ObstacleKind::Building, 1);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        let (plat, plon) = ll(100.0, 0.0); // between the two, inside neither
+        assert!(!idx.contains_built(plat, plon, 5.0, &mut sc));
+        let (ilat, ilon) = ll(1800.0, 0.0);
+        assert!(idx.contains_built(ilat, ilon, 5.0, &mut sc));
+    }
+
+    /// gg case (Codex): a footprint WIDER than any fixed cast length must
+    /// still read inside near its west wall — the walk bound is derived
+    /// from the data (max footprint bbox width), not a constant.
+    #[test]
+    fn oversized_footprint_still_contained() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 1500.0), 10.0, ObstacleKind::Building, 0);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        let (plat, plon) = ll(-1400.0, 0.0); // 2.9 km from the east wall
+        assert!(idx.contains_built(plat, plon, 5.0, &mut sc));
+        let (olat, olon) = ll(-1600.0, 0.0);
+        assert!(!idx.contains_built(olat, olon, 5.0, &mut sc));
+    }
+
+    /// Holes share the outer ring's id: a courtyard probe crosses hole+outer
+    /// east walls (even ⇒ outside), a probe between them only the outer wall
+    /// (odd ⇒ inside).
+    #[test]
+    fn courtyard_reads_outside_annulus_inside() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        b.add_ring(&square(0.0, 0.0, 50.0), 12.0, ObstacleKind::Building, 0);
+        b.add_ring(&square(0.0, 0.0, 20.0), 12.0, ObstacleKind::Building, 0);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        assert!(
+            !idx.contains_built(OLAT, OLON, 5.0, &mut sc),
+            "courtyard centre"
+        );
+        let (alat, alon) = ll(35.0, 0.0);
+        assert!(
+            idx.contains_built(alat, alon, 5.0, &mut sc),
+            "annulus between hole and outer wall"
+        );
+    }
+
+    /// gg case (Codex): a TANGENT vertex (both adjacent edges on the same
+    /// side of the probe row) must contribute even parity. The half-open
+    /// u-rule counted it once; the straddle rule counts both edges or
+    /// neither. Apex-down triangle, probe row through the apex.
+    #[test]
+    fn tangent_vertex_keeps_parity() {
+        let mut b = ObstacleIndex::builder(OLAT, OLON);
+        let tri = vec![ll(0.0, 0.0), ll(30.0, 40.0), ll(-30.0, 40.0)];
+        b.add_ring(&tri, 10.0, ObstacleKind::Building, 0);
+        let idx = b.build();
+        let mut sc = Vec::new();
+        // Probe west of the apex, ON the apex row: both slanted edges cross
+        // the row AT the apex — two counts (even), outside. One count would
+        // report phantom containment all the way west.
+        let (alat, wlon) = (ll(0.0, 0.0).0, ll(-200.0, 0.0).1);
+        assert!(!idx.contains_built(alat, wlon, 5.0, &mut sc));
+        let (ilat, ilon) = ll(0.0, 20.0);
+        assert!(idx.contains_built(ilat, ilon, 5.0, &mut sc), "interior");
     }
 }

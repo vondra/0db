@@ -732,7 +732,7 @@ mod tests {
     }
 
     fn one_road_meta(roads: &[RoadSegment]) -> RoadMetadata {
-        let (_periods, contribs) = compute_roads(&receiver(), roads, &[], &FlatRasters, None);
+        let (_periods, contribs) = compute_roads(&receiver(), roads, &[], None, &FlatRasters, None);
         assert_eq!(contribs.len(), 1, "single segment → single contributor");
         match contribs.into_iter().next().unwrap().metadata.unwrap() {
             SourceMetadata::Road(m) => m,
@@ -768,9 +768,9 @@ mod tests {
     #[test]
     fn none_channel_is_receiver_path_bit_identical() {
         let roads = vec![secondary_segment()];
-        let plain = compute_roads(&receiver(), &roads, &[], &FlatRasters, None).0;
+        let plain = compute_roads(&receiver(), &roads, &[], None, &FlatRasters, None).0;
         defaults::set_road_row_admins(Some(vec![None]));
-        let channeled = compute_roads(&receiver(), &roads, &[], &FlatRasters, None).0;
+        let channeled = compute_roads(&receiver(), &roads, &[], None, &FlatRasters, None).0;
         defaults::set_road_row_admins(None);
         assert_eq!(plain.ld_db, channeled.ld_db);
         assert_eq!(plain.le_db, channeled.le_db);

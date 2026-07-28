@@ -48,6 +48,7 @@ use std::sync::OnceLock;
 
 use noise_compute::constants::{ALPHA_ATM, A_WEIGHTING, GROUND_CF};
 use noise_compute::propagation::iso9613::fast_exp_f64;
+use noise_compute::propagation::obstacle_index::{CrossingCandidate, ObstacleSet};
 use noise_compute::propagation::path_effects;
 use noise_compute::propagation::path_profile::CoarseMid;
 use noise_compute::propagation::PathProfile;
@@ -253,6 +254,8 @@ pub(crate) struct BandScratch {
     /// reads a 4-cell bilinear quad, so cell reads = 4× this — the numerator of
     /// the read-redundancy metric (cell reads ÷ grid cells = ×-reread).
     pub(crate) raster_samples: u64,
+    /// Vector-obstacle crossings of the current ray (geodata-v2, reused).
+    pub(crate) cand_scratch: Vec<CrossingCandidate>,
 }
 
 impl BandScratch {
@@ -266,6 +269,7 @@ impl BandScratch {
             path_calls: 0,
             skipped_calls: 0,
             raster_samples: 0,
+            cand_scratch: Vec::new(),
         }
     }
 }
@@ -375,10 +379,19 @@ pub(crate) fn scatter_tile<G: PixelGeometry>(
     geo: &G,
     tile: &FusedTileZ13,
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     n_rows: usize,
     accum: &mut TileAccumulator,
 ) -> ScatterStats {
-    scatter_tile_with_cfg(geo, tile, barriers, n_rows, accum, coarse_mid_cfg())
+    scatter_tile_with_cfg(
+        geo,
+        tile,
+        barriers,
+        obstacles,
+        n_rows,
+        accum,
+        coarse_mid_cfg(),
+    )
 }
 
 /// [`scatter_tile`] with the coarse-middle cadence passed EXPLICITLY (bypassing
@@ -389,6 +402,7 @@ pub(crate) fn scatter_tile_with_cfg<G: PixelGeometry>(
     geo: &G,
     tile: &FusedTileZ13,
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     n_rows: usize,
     accum: &mut TileAccumulator,
     cfg: Option<CoarseMid>,
@@ -411,7 +425,8 @@ pub(crate) fn scatter_tile_with_cfg<G: PixelGeometry>(
         .fold(BandScratch::new, |mut s, (py_lo, py_hi, px_lo, px_hi)| {
             if py_lo < py_hi && px_lo < px_hi {
                 scatter_band(
-                    geo, tile, &prep, barriers, py_lo, py_hi, px_lo, px_hi, eta, cfg, &mut s,
+                    geo, tile, &prep, barriers, obstacles, py_lo, py_hi, px_lo, px_hi, eta, cfg,
+                    &mut s,
                 );
             }
             s
@@ -436,11 +451,13 @@ pub(crate) fn scatter_tile_with_cfg<G: PixelGeometry>(
 /// Scatter every source that reaches the block `[py_lo, py_hi) × [px_lo, px_hi)`
 /// into its pixels, applying the per-pixel energy-budget skip. The single hot
 /// loop both line and point share; the per-pixel geometry is `geo.pixel`.
+#[allow(clippy::too_many_arguments)]
 fn scatter_band<G: PixelGeometry>(
     geo: &G,
     tile: &FusedTileZ13,
     prep: &[G::Prep],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     py_lo: usize,
     py_hi: usize,
     px_lo: usize,
@@ -505,10 +522,20 @@ fn scatter_band<G: PixelGeometry>(
                 // EdgePoint Vec, screening skips the ObstacleEdge materialisation.
                 let terrain_bands =
                     path_effects::terrain_attenuation(&mut s.profile, t.src_alt, rx_alt);
+                let obstacle_input = match obstacles {
+                    Some(set) => {
+                        set.crossings(t.cp_lat, t.cp_lon, rx_lat, rx_lon, &mut s.cand_scratch);
+                        path_effects::ObstacleInput {
+                            candidates: &s.cand_scratch,
+                            replace_sample_buildings: true,
+                        }
+                    }
+                    None => path_effects::ObstacleInput::CANDIDATES_OFF,
+                };
                 let screening = path_effects::screening_attenuation(
                     &mut s.profile,
                     barriers,
-                    path_effects::ObstacleInput::CANDIDATES_OFF,
+                    obstacle_input,
                     t.src_alt,
                     rx_alt,
                     t.excl_m,

@@ -207,3 +207,37 @@ pub fn pack_tile(
         barr,
     }
 }
+
+/// Refuse to run a GPU surface build in vector-obstacle mode: the GPU
+/// scatter still samples the RASTER building channel and bakes no vector
+/// reflection (CUDA candidate port = geodata-v2 1.6). Failing loudly at
+/// startup keeps a hybrid CPU+GPU build from silently painting two physics
+/// — route the layer through the CPU builder or unset the flag. Lives in
+/// the lib (not the feature-gated bin) so hosts without CUDA compile and
+/// test the policy too.
+pub fn refuse_vector_mode() -> anyhow::Result<()> {
+    if noise_compute::propagation::obstacle_index::vector_buildings_enabled() {
+        anyhow::bail!(
+            "QM_VECTOR_BUILDINGS=1: gpu-surface has no vector obstacle support yet \
+             (geodata-v2 1.6) — build this layer on the CPU path or unset the flag"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod vector_mode_tests {
+    /// The refusal must fire BEFORE any GPU work: a hybrid build script
+    /// routing road/rail here under QM_VECTOR_BUILDINGS=1 would otherwise
+    /// paint raster physics next to the CPU layers' vector physics
+    /// (gg review 2026-07-28). Env set is process-safe: this test binary
+    /// has no other reader of the OnceLock'd flag.
+    #[test]
+    fn vector_mode_refused_at_startup() {
+        std::env::set_var("QM_VECTOR_BUILDINGS", "1");
+        let err = super::refuse_vector_mode().expect_err("must refuse vector mode");
+        assert!(err
+            .to_string()
+            .contains("gpu-surface has no vector obstacle support"));
+    }
+}

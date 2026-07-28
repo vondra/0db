@@ -456,7 +456,10 @@ mod tests {
         let a = admin_for(b"TH", 0, Continent::Asia);
         assert_eq!(resolve_traffic_default(3, a), (3720.0, 600.0, 780.0, 900.0));
         assert_eq!(resolve_traffic_default(4, a), (1550.0, 250.0, 325.0, 375.0));
-        assert_eq!(resolve_traffic_default(0, a), (37200.0, 6000.0, 7800.0, 9000.0));
+        assert_eq!(
+            resolve_traffic_default(0, a),
+            (37200.0, 6000.0, 7800.0, 9000.0)
+        );
         assert_eq!(resolve_traffic_default(5, a), (744.0, 120.0, 156.0, 180.0));
     }
 

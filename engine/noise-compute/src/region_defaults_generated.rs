@@ -17,8 +17,7 @@ use crate::defaults::Aadt;
 
 /// (iso, engine road_class, (light, medium, heavy, moto)) — veh/day both
 /// directions. Sorted by (iso, class) for binary search.
-pub const REGION_DEFAULTS: &[(&[u8; 2], u8, Aadt)] = &[
-];
+pub const REGION_DEFAULTS: &[(&[u8; 2], u8, Aadt)] = &[];
 
 /// Measured default for (country, road_class), or None when no census
 /// covers that arm — the caller then falls through to the hand-tuned

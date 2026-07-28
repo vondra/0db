@@ -56,39 +56,49 @@ fn staging_root(data_dir: &Path) -> PathBuf {
 }
 
 /// The cell's shard directory: promoted tree first (post-Wave-1 layout),
-/// staging second. `None` when the cell is nowhere ingested.
-fn cell_dir(h3r4_dir: Option<&Path>, data_dir: &Path, cell: CellIndex) -> Option<PathBuf> {
+/// staging second. `Ok(None)` when the cell is nowhere ingested; `Err` on
+/// any listing failure other than absence.
+fn cell_dir(
+    h3r4_dir: Option<&Path>,
+    data_dir: &Path,
+    cell: CellIndex,
+) -> Result<Option<PathBuf>, String> {
     if std::env::var("QM_OBSTACLES_DIR").is_err() {
         if let Some(h3r4) = h3r4_dir {
             let promoted = h3r4.join(cell.to_string());
-            if has_shards(&promoted) {
-                return Some(promoted);
+            if !shard_paths(&promoted)?.is_empty() {
+                return Ok(Some(promoted));
             }
         }
     }
     let staged = staging_root(data_dir).join(cell.to_string());
-    has_shards(&staged).then_some(staged)
-}
-
-fn has_shards(dir: &Path) -> bool {
-    shard_paths(dir).map(|v| !v.is_empty()).unwrap_or(false)
+    Ok((!shard_paths(&staged)?.is_empty()).then_some(staged))
 }
 
 /// Sorted shard listing — deterministic iteration keeps the query-local
-/// obstacle ordinals stable for one on-disk state.
-fn shard_paths(dir: &Path) -> Option<Vec<PathBuf>> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    let mut out: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("obstacles") && n.ends_with(".arrow"))
-        })
-        .collect();
+/// obstacle ordinals stable for one on-disk state. A missing directory is a
+/// legitimate "not ingested" (`Ok(empty)`); any OTHER I/O failure is an
+/// error — a permission or disk fault must not read as "cell missing" and
+/// admit an incomplete index under partial mode (gg review 2026-07-28).
+fn shard_paths(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("read_dir {}: {e}", dir.display())),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", dir.display()))?;
+        let p = entry.path();
+        if p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("obstacles") && n.ends_with(".arrow"))
+        {
+            out.push(p);
+        }
+    }
     out.sort();
-    Some(out)
+    Ok(out)
 }
 
 /// Assemble the query's [`ObstacleSet`]. `None` ⇒ caller keeps the raster
@@ -104,18 +114,27 @@ pub fn load_obstacle_set(
     let cell = LatLng::new(lat, lon).ok()?.to_cell(Resolution::Four);
     let mut indexes = Vec::new();
     for c in cell.grid_disk::<Vec<_>>(1) {
-        let Some(dir) = cell_dir(h3r4_dir, data_dir, c) else {
-            if c == cell {
-                return None; // query cell itself not ingested — plain raster
+        let dir = match cell_dir(h3r4_dir, data_dir, c) {
+            Err(e) => {
+                // Discovery I/O fault ≠ "not ingested": abort loudly even
+                // under partial mode.
+                eprintln!("obstacle_store: {e} — falling back to raster for this query");
+                return None;
             }
-            if allow_partial {
-                continue; // dev A/B at the staging frontier — documented risk
+            Ok(Some(dir)) => dir,
+            Ok(None) => {
+                if c == cell {
+                    return None; // query cell itself not ingested — plain raster
+                }
+                if allow_partial {
+                    continue; // dev A/B at the staging frontier — documented risk
+                }
+                eprintln!(
+                    "obstacle_store: ring cell {c} not ingested — falling back to raster \
+                     (set QM_OBSTACLES_ALLOW_PARTIAL=1 only for dev A/B)"
+                );
+                return None;
             }
-            eprintln!(
-                "obstacle_store: ring cell {c} not ingested — falling back to raster \
-                 (set QM_OBSTACLES_ALLOW_PARTIAL=1 only for dev A/B)"
-            );
-            return None;
         };
         match cell_index(c, &dir) {
             Ok(idx) => indexes.push(idx),
@@ -172,8 +191,10 @@ fn build_cell_index(cell: CellIndex, dir: &Path) -> Result<ObstacleIndex, String
     let centre = LatLng::from(cell);
     let mut builder = ObstacleIndex::builder(centre.lat(), centre.lng());
     let mut next_id: u32 = 0;
-    let shards =
-        shard_paths(dir).ok_or_else(|| format!("unreadable shard dir {}", dir.display()))?;
+    let shards = shard_paths(dir)?;
+    if shards.is_empty() {
+        return Err(format!("shard dir emptied under us: {}", dir.display()));
+    }
     for path in shards {
         let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let reader = FileReader::try_new(Cursor::new(bytes), None)

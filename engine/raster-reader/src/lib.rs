@@ -18,13 +18,8 @@ pub use fused_grid::{FusedGrid, FusedPixel};
 pub use real_rasters::RealRasters;
 pub use tile::RawTile;
 
-/// Half-edge of the `building_enclosure` 3×3 probe footprint, in metres.
-/// 75 m yields a 150 × 150 m isotropic square; the prior 0.001° degree
-/// step squeezed E-W at high latitudes (down to ~75 m at 70°N), making
-/// the enclosure metric latitude-dependent.
-///
-/// Shared by [`real_rasters::RealRasters::building_enclosure`] and
-/// [`fused_grid::FusedGrid::building_enclosure`] — the two impls must probe the
-/// identical footprint for popup/pipeline parity, so the constant lives in the
-/// crate root and both reach it via `crate::ENCLOSURE_RADIUS_M`.
-pub(crate) const ENCLOSURE_RADIUS_M: f64 = 75.0;
+/// Re-export of the canonical enclosure probe half-edge — the raster 3×3
+/// probe (here) and the vector probe (`noise_compute::propagation::
+/// obstacle_index::enclosure_db`) must cover the identical 150 × 150 m
+/// footprint for popup/pipeline parity.
+pub(crate) use noise_compute::constants::ENCLOSURE_RADIUS_M;

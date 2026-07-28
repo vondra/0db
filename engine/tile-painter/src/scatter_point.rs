@@ -22,6 +22,7 @@
 use noise_compute::propagation::geo::{
     below_free_field_threshold, effective_area_source_dist, flat_dist, slant_dist,
 };
+use noise_compute::propagation::obstacle_index::ObstacleSet;
 use noise_compute::propagation::path_profile::CoarseMid;
 use noise_compute::types::{Barrier, RasterSampler};
 use raster_reader::fused_tile_z13::FusedTileZ13;
@@ -64,9 +65,10 @@ pub fn scatter_tile(
     tile: &FusedTileZ13,
     points: &[PointRow],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     accum: &mut TileAccumulator,
 ) -> PointScatterStats {
-    scatter_tile_with_cfg(tile, points, barriers, accum, coarse_mid_cfg())
+    scatter_tile_with_cfg(tile, points, barriers, obstacles, accum, coarse_mid_cfg())
 }
 
 /// [`scatter_tile`] with the coarse-middle cadence passed EXPLICITLY (bypassing
@@ -76,6 +78,7 @@ pub fn scatter_tile_with_cfg(
     tile: &FusedTileZ13,
     points: &[PointRow],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     accum: &mut TileAccumulator,
     cfg: Option<CoarseMid>,
 ) -> PointScatterStats {
@@ -83,6 +86,7 @@ pub fn scatter_tile_with_cfg(
         &PointGeometry { points },
         tile,
         barriers,
+        obstacles,
         points.len(),
         accum,
         cfg,

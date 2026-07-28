@@ -101,6 +101,12 @@ pub const BUILDING_DEFAULT_HEIGHT_M: f64 = 8.0;
 /// [`BUILDING_DEFAULT_HEIGHT_M`].
 pub const BUILDING_FLOOR_HEIGHT_M: f64 = 3.0;
 
+/// Half-edge of the receiver-enclosure 3×3 probe footprint (m) — a metric
+/// 150 × 150 m isotropic square. CANONICAL here since the vector enclosure
+/// (obstacle_index::enclosure_db) joined the raster probe (raster-reader
+/// re-exports it); popup and pipeline must probe the identical footprint.
+pub const ENCLOSURE_RADIUS_M: f64 = 75.0;
+
 /// CNOSSOS road emission reference speed [km/h].
 pub const V_REF_ROAD: f64 = 70.0;
 

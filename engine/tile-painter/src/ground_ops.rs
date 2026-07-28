@@ -40,6 +40,7 @@ use noise_compute::compute::aircraft_v6::AirportTrafficRowView;
 use noise_compute::constants::{ground_ops_max_radius, ALPHA_ATM, GROUND_CF};
 use noise_compute::propagation::geo::point_to_segment_full;
 use noise_compute::propagation::iso9613::fast_exp_f64;
+use noise_compute::propagation::obstacle_index::ObstacleSet;
 use noise_compute::propagation::path_effects;
 use noise_compute::types::{Barrier, RasterSampler};
 use raster_reader::fused_tile_z13::{tile_pixel_size_m, FusedTileZ13, TILE_PX};
@@ -121,6 +122,7 @@ pub fn scatter_tile(
     tile: &FusedTileZ13,
     traffic: &[AirportTrafficRowView<'_>],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     // GA 365-day hybrid per-class weight LUT (`ga-365d-hybrid-plan.md` §2,
     // layer-ground.md §4). Applied to `veh_kind == 0` (aircraft) rows
     // only — GSE rows weight 1.0. Uniform for non-hybrid extracts.
@@ -157,6 +159,7 @@ pub fn scatter_tile(
                     &prep,
                     traffic,
                     barriers,
+                    obstacles,
                     class_weights,
                     py_lo,
                     py_hi,
@@ -276,11 +279,13 @@ fn prepare_microsegs(
 /// Scatter every microseg that reaches the block `[py_lo, py_hi) × [px_lo, px_hi)`
 /// into its pixels, applying the per-pixel energy-budget skip; one path build per
 /// (microseg, pixel) shared by all the microseg's rows.
+#[allow(clippy::too_many_arguments)]
 fn scatter_band(
     tile: &FusedTileZ13,
     prep: &[PreparedMicroseg],
     traffic: &[AirportTrafficRowView<'_>],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     class_weights: &noise_compute::emission::aircraft::ClassWeights,
     py_lo: usize,
     py_hi: usize,
@@ -376,10 +381,20 @@ fn scatter_band(
                 s.path_calls += 1;
                 let ground_g = path_effects::ground_g_from_profile(&s.profile);
                 let terrain = path_effects::terrain_attenuation(&mut s.profile, src_alt, rx_alt);
+                let obstacle_input = match obstacles {
+                    Some(set) => {
+                        set.crossings(pts.cp_lat, pts.cp_lon, rx_lat, rx_lon, &mut s.cand_scratch);
+                        path_effects::ObstacleInput {
+                            candidates: &s.cand_scratch,
+                            replace_sample_buildings: true,
+                        }
+                    }
+                    None => path_effects::ObstacleInput::CANDIDATES_OFF,
+                };
                 let screening = path_effects::screening_attenuation(
                     &mut s.profile,
                     barriers,
-                    path_effects::ObstacleInput::CANDIDATES_OFF,
+                    obstacle_input,
                     src_alt,
                     rx_alt,
                     0.0,

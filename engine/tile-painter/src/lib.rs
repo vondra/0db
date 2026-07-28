@@ -37,6 +37,7 @@ pub mod source_loader_airborne;
 pub mod source_loader_barrier;
 pub mod source_loader_building;
 pub mod source_loader_industrial;
+pub mod source_loader_obstacle;
 pub mod source_loader_rail;
 pub mod source_loader_road;
 pub mod source_loader_traffic;

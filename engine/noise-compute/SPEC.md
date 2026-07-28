@@ -337,13 +337,26 @@ treats any canopy ≥ 10 % as dense foliage; scalar compensates for over-applica
 
 ### 3.8 Urban reflection (ISO 9613-2 §7.5)
 Per-RECEIVER boost based on building enclosure (`raster-reader::building_enclosure`):
-3×3 probe at 75 m metric spacing around the receiver; buildings taller than 5 m count.
+3×3 probe at 75 m metric spacing (`ENCLOSURE_RADIUS_M`) around the receiver;
+buildings taller than 5 m count.
 ```
 density > 0.5 → A_refl = +3.0 dB;  density > 0.2 → +1.5 dB;  else 0 dB
 ```
 Applied ONCE per receiver, not per source-receiver path. Maximum is 3 dB
 (0 / 1.5 / 3.0 by probe density; the former `reflection.rs` clamp helper was
 dead code and is deleted).
+
+VECTOR MODE (`QM_VECTOR_BUILDINGS=1`, geodata-v2 — OFF in production until
+the Wave-1 cutover): the SAME nine probes, radius, height gate, and
+thresholds, but each probe is an exact point-in-footprint parity test
+against the obstacle store (`obstacle_index::enclosure_db`) instead of a
+30 m raster cell read. The pipeline pre-bakes it into `rx_refl_db` per
+receiver (`tile-painter::surface_region`); semantics at footprint EDGES
+differ from the raster by up to one occupancy step — a deliberate,
+flag-scoped representation change, quantified in the 1.9 A/B gate. The
+POPUP still reads the raster probe in vector mode until the popup-wide
+reflection swap (plan 1.4b); GPU surface builds refuse vector mode
+entirely (`noise-gpu::refuse_vector_mode`, CUDA port = plan 1.6).
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
 ⏸ IMPLEMENTED BEHIND `FAVOURABLE_MIXING = false` (constants.rs) — output

@@ -837,6 +837,7 @@ fn run_stream(
 }
 
 fn main() -> Result<()> {
+    noise_gpu::refuse_vector_mode()?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // Index-based parse: each known flag consumes the NEXT token (which must exist
     // and not itself be a flag); everything else is a positional. Tracking by

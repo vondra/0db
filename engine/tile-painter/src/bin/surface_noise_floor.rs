@@ -288,10 +288,10 @@ fn render_lden(
     let mut acc = TileAccumulator::new();
     match sources {
         Sources::Line(rows) => {
-            scatter_tile_with_cfg(tile, rows, barriers, &mut acc, cfg);
+            scatter_tile_with_cfg(tile, rows, barriers, None, &mut acc, cfg);
         }
         Sources::Point(rows) => {
-            scatter_point_with_cfg(tile, rows, barriers, &mut acc, cfg);
+            scatter_point_with_cfg(tile, rows, barriers, None, &mut acc, cfg);
         }
     }
     let n = TILE_PX * TILE_PX;

@@ -128,6 +128,10 @@ fn build_class_weights(
 /// check (`v15` for airborne/cruise, `airport_traffic_v8` for the
 /// ground-ops arrow), so the popup HTTP path can map the failure to a
 /// structured 500 response with an operator-actionable message.
+// 14 args: the popup aircraft entry accretes one param per physics input.
+// Bundle into a context struct together with dropping the dead
+// `_synth_airport_lines_batches` param below (same planned cleanup commit).
+#[allow(clippy::too_many_arguments)]
 pub fn add_v6_aircraft_to_result(
     result: &mut NoiseResult,
     traces: &mut TraceCollector,
@@ -144,6 +148,10 @@ pub fn add_v6_aircraft_to_result(
     airport_summary_path: Option<&Path>,
     rasters: &dyn RasterSampler,
     barriers: &[noise_compute::types::Barrier],
+    // Vector obstacles (geodata-v2): threads into ground-ops screening
+    // (`compute_airport_traffic::run`) so airport ground shares the popup's
+    // physics; airborne/cruise are structurally exempt (no ground rays).
+    obstacles: Option<&noise_compute::propagation::obstacle_index::ObstacleSet>,
     n_days: u16,
     // Per-kind top-K cap for airborne sub-segment traces — passed to
     // compute_aircraft_v6 so the bounded min-heap in airborne::scatter
@@ -291,6 +299,7 @@ pub fn add_v6_aircraft_to_result(
             &class_weights,
             rasters,
             barriers,
+            obstacles,
             &osm_ref_lookup,
             airport_summary_lookup.as_ref(),
             Some(traces),

@@ -187,7 +187,6 @@ pub(super) fn compute_single_edge_at(
     let d_dr = (d_rg * d_rg + (r_star_z - d_top).powi(2)).sqrt();
     let d_sr = (total_dist * total_dist + (r_star_z - s_star_z).powi(2)).sqrt();
     let delta_star = (d_sd + d_dr - d_sr).max(0.0);
-    let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
 
     let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
     DiffractionResult {

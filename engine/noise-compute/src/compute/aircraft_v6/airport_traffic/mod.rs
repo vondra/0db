@@ -162,9 +162,12 @@ fn db_to_lin(db: f64) -> f64 {
 /// microsegment. Output is cached per `(osm_id, segment_idx)` for
 /// downstream rows. Cost ~80-150 µs per call at typical raster
 /// density (matches road compute's per-segment path cost).
+#[allow(clippy::too_many_arguments)]
 fn compute_microseg_path(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
+    cand_scratch: &mut Vec<crate::propagation::obstacle_index::CrossingCandidate>,
     src_lat: f64,
     src_lon: f64,
     rcv_lat: f64,
@@ -187,10 +190,12 @@ fn compute_microseg_path(
     let ground_g = path_effects::ground_g_from_profile(&path_profile);
     let (terrain, _terrain_profile_points) =
         path_effects::terrain_attenuation_with_meta(&mut path_profile, src_alt, rcv_alt);
+    let obstacle_input =
+        crate::obstacle_input_for_ray(obstacles, cand_scratch, src_lat, src_lon, rcv_lat, rcv_lon);
     let (screening_atten, _obstacle_trace) = path_effects::screening_attenuation_with_meta(
         &mut path_profile,
         barriers,
-        path_effects::ObstacleInput::CANDIDATES_OFF,
+        obstacle_input,
         src_alt,
         rcv_alt,
         0.0, // no exclusion radius — airport ground source is point-like
@@ -353,6 +358,10 @@ pub fn run(
     class_weights: &crate::emission::aircraft::ClassWeights,
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
+    // Vector obstacles (geodata-v2): ground-ops screening takes the same
+    // exact building crossings as every other popup surface kernel; `None`
+    // keeps the raster path byte-identical.
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
     osm_ref_lookup: &HashMap<u64, String>,
     airport_summary: Option<&AirportSummaryLookup<'_>>,
     traces: Option<&mut crate::types::TraceCollector>,
@@ -360,6 +369,7 @@ pub fn run(
     if rows.is_empty() {
         return Vec::new();
     }
+    let mut cand_scratch: Vec<crate::propagation::obstacle_index::CrossingCandidate> = Vec::new();
     let n_days_f = (n_days as f64).max(1.0);
     // GA-window divisor for the split-union movement counts: GA-class fids
     // are observed over 365 days, so the popup divides them by THIS while
@@ -370,7 +380,9 @@ pub fn run(
     let rcv_alt = receiver.altitude_m();
     // Urban-reflection boost is a receiver-only property — same value
     // across every microsegment for this popup. Sample once and reuse
-    // in both the hot loop and the segment-trace emission.
+    // in both the hot loop and the segment-trace emission. Still the
+    // RASTER probe even in vector mode — the popup-wide vector
+    // enclosure swap is plan 1.4b, one site for every popup kernel.
     let refl_db = rasters.building_enclosure(recv_lat, recv_lon);
     // Heatmap-parity divergence floor: the user reads popup numbers
     // off a z=13 HM3 pixel, so the popup uses the same half-pixel
@@ -435,7 +447,16 @@ pub fn run(
             .entry((row.osm_id, row.segment_idx))
             .or_insert_with(|| {
                 compute_microseg_path(
-                    rasters, barriers, cp_lat, cp_lon, recv_lat, recv_lon, d_to_recv, rcv_alt,
+                    rasters,
+                    barriers,
+                    obstacles,
+                    &mut cand_scratch,
+                    cp_lat,
+                    cp_lon,
+                    recv_lat,
+                    recv_lon,
+                    d_to_recv,
+                    rcv_alt,
                 )
             });
 

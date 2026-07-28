@@ -700,7 +700,7 @@ mod tests {
     }
 
     fn periods_for(segs: &[RailSegment]) -> NoisePeriods {
-        compute_railways(&receiver(), segs, &[], &FlatRasters, None).0
+        compute_railways(&receiver(), segs, &[], None, &FlatRasters, None).0
     }
 
     /// Gate (d) popup: the EU vs world period split follows the SEGMENT's

@@ -142,9 +142,9 @@ fn line_kernel_applies_vector_barriers() {
     assert!(!barriers.is_empty());
 
     let mut acc_no = TileAccumulator::new();
-    scatter_line::scatter_tile(&tile, &lines, &[], &mut acc_no);
+    scatter_line::scatter_tile(&tile, &lines, &[], None, &mut acc_no);
     let mut acc_wall = TileAccumulator::new();
-    scatter_line::scatter_tile(&tile, &lines, &barriers, &mut acc_wall);
+    scatter_line::scatter_tile(&tile, &lines, &barriers, None, &mut acc_wall);
 
     // Shadow receiver ~60 m east of the wall at the wall's mid-latitude.
     let rx_lon = wall_lon + m_to_deg_lon(60.0, c_lat);
@@ -241,9 +241,9 @@ fn point_kernel_applies_vector_barriers() {
     let barriers = BarrierData::from_segments(segs).for_tile(&tile.bbox, 10_000.0);
 
     let mut acc_no = TileAccumulator::new();
-    scatter_point::scatter_tile(&tile, &points, &[], &mut acc_no);
+    scatter_point::scatter_tile(&tile, &points, &[], None, &mut acc_no);
     let mut acc_wall = TileAccumulator::new();
-    scatter_point::scatter_tile(&tile, &points, &barriers, &mut acc_wall);
+    scatter_point::scatter_tile(&tile, &points, &barriers, None, &mut acc_wall);
 
     let rx_lon = wall_lon + m_to_deg_lon(60.0, c_lat);
     let (py, px) = (py_of(&tile, c_lat), px_of(&tile, rx_lon));
@@ -552,13 +552,13 @@ fn run_w2_comparison(spacing_m: f64) -> (Vec<f64>, Vec<f64>, Vec<f64>, usize) {
         }
     }
     let mut acc_b = TileAccumulator::new();
-    scatter_line::scatter_tile(&tile_b, &lines, &[], &mut acc_b);
+    scatter_line::scatter_tile(&tile_b, &lines, &[], None, &mut acc_b);
 
     // Vector arm: the SAME wall as exact midpoint barriers through the popup
     // kernel (burn borrowed `segs` above; the vector arm consumes it now).
     let barriers = BarrierData::from_segments(segs).for_tile(&tile_v.bbox, 10_000.0);
     let mut acc_v = TileAccumulator::new();
-    scatter_line::scatter_tile(&tile_v, &lines, &barriers, &mut acc_v);
+    scatter_line::scatter_tile(&tile_v, &lines, &barriers, None, &mut acc_v);
 
     let wall_n = c_lat + m_to_deg_lat(360.0);
     let wall_s = c_lat - m_to_deg_lat(360.0);

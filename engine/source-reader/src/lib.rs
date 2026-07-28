@@ -416,6 +416,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         airport_summary_pathbuf.as_deref(),
         rasters,
         &sources.barriers,
+        obstacle_set.as_ref(),
         sources.n_days,
         top_k_per_kind,
     )

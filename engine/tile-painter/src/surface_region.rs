@@ -31,6 +31,7 @@ use crate::source_line::LineRow;
 use crate::source_loader_barrier::BarrierData;
 use crate::source_loader_building::BuildingData;
 use crate::source_loader_industrial::IndustrialData;
+use crate::source_loader_obstacle::ObstacleData;
 use crate::source_loader_rail::RailData;
 use crate::source_loader_road::RoadData;
 use crate::source_loader_traffic::AirportTrafficData;
@@ -333,6 +334,8 @@ pub fn process_surface_region(
     // once (absent in 98.5% of regions → empty, zero cost), then slice per tile.
     let barrier_data = BarrierData::load_for_r4s(ctx.h3r4_dir, &ring)
         .with_context(|| format!("load barriers R4 {region_r4:015x}"))?;
+    let obstacle_data = ObstacleData::load_for_r4s(ctx.h3r4_dir, region_r4, &ring)
+        .with_context(|| format!("load obstacles R4 {region_r4:015x}"))?;
     stats.t_load += t_l.elapsed();
     for (rows, _, dir_name) in &layer_rows {
         stats.by_layer.entry(*dir_name).or_default().loaded_rows += rows.len() as u64;
@@ -351,7 +354,31 @@ pub fn process_surface_region(
     for ((bx, by), batch_tiles) in &batches {
         // ONE halo per batch (10 km in ground mode), shared by every layer.
         let t_r = Instant::now();
-        let batch = TileBatch::build(ctx.zoom, *bx, *by, ctx.batch_n, ctx.halo_m, ctx.rasters);
+        let mut batch = TileBatch::build(ctx.zoom, *bx, *by, ctx.batch_n, ctx.halo_m, ctx.rasters);
+        // Vector mode: the pre-baked rx_refl (raster 3×3 enclosure) is
+        // recomputed from footprints — the SAME 150 × 150 m probe — and the
+        // GPU rxar upload carries it unchanged (gg review: pre-bake site).
+        // NOTE: the POPUP still takes reflection from the raster probe; its
+        // vector enclosure lands with the popup-reflection follow-up (plan
+        // 1.4b) — until then flag-ON pipeline vs popup reflection may differ
+        // by one 1.5 dB step at footprint edges.
+        if let Some(set) = obstacle_data.set() {
+            use noise_compute::constants::ENCLOSURE_RADIUS_M;
+            use noise_compute::propagation::obstacle_index::enclosure_db;
+            use raster_reader::fused_tile_z13::TILE_PX;
+            // Only the REQUESTED tiles are painted — rebaking the whole
+            // batch_n² grid would triple the bake cost for nothing.
+            for &(x, y) in batch_tiles {
+                let tile = &mut batch.tiles[((y - by) * ctx.batch_n + (x - bx)) as usize];
+                for py in 0..TILE_PX {
+                    let lat = tile.rx_lat[py];
+                    for px in 0..TILE_PX {
+                        tile.rx_refl_db[py * TILE_PX + px] =
+                            enclosure_db(set, lat, tile.rx_lon[px], ENCLOSURE_RADIUS_M) as f32;
+                    }
+                }
+            }
+        }
         stats.t_raster += t_r.elapsed();
         // Count the shared halo's cells once per batch (adjacent batch halos
         // overlap → allocated batch-halo cells, a slight over-count ⇒ a
@@ -377,7 +404,13 @@ pub fn process_surface_region(
                 let t_s = Instant::now();
                 let (walked, sk, rs, ground_rows, ground_microsegs, time_divided) = match rows {
                     SurfaceRows::Line(r) => {
-                        let st = scatter_line::scatter_tile(tile, r, &tile_barriers, &mut accum);
+                        let st = scatter_line::scatter_tile(
+                            tile,
+                            r,
+                            &tile_barriers,
+                            obstacle_data.set(),
+                            &mut accum,
+                        );
                         (
                             st.path_calls,
                             st.skipped_calls,
@@ -388,7 +421,13 @@ pub fn process_surface_region(
                         )
                     }
                     SurfaceRows::Point(r) => {
-                        let st = scatter_point::scatter_tile(tile, r, &tile_barriers, &mut accum);
+                        let st = scatter_point::scatter_tile(
+                            tile,
+                            r,
+                            &tile_barriers,
+                            obstacle_data.set(),
+                            &mut accum,
+                        );
                         (
                             st.path_calls,
                             st.skipped_calls,
@@ -404,6 +443,7 @@ pub fn process_surface_region(
                             tile,
                             &views,
                             &tile_barriers,
+                            obstacle_data.set(),
                             &ctx.class_weights,
                             &mut accum,
                         );
