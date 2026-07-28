@@ -41,6 +41,7 @@ DEFAULT_EXCL = {
     "road": "tile-painter/src/source_loader_road.rs noise-compute/src/compute/roads.rs noise-compute/src/emission/road.rs"
             " noise-compute/src/normalize/road.rs noise-compute/src/defaults.rs"
             " noise-compute/src/city_consts_generated.rs noise-compute/src/country_defaults_generated.rs"
+            " noise-compute/src/region_defaults_generated.rs"
             " noise-compute/src/country_speed_defaults_generated.rs",
     "rail": "tile-painter/src/source_loader_rail.rs noise-compute/src/compute/railways.rs noise-compute/src/emission/railway.rs",
     "industrial": "noise-compute/src/emission/industrial.rs noise-compute/src/emission/wind.rs",

@@ -20,6 +20,7 @@ pub mod normalize;
 pub mod periods;
 pub mod present;
 pub mod propagation;
+pub mod region_defaults_generated;
 pub mod sources;
 pub mod traces;
 pub mod types;
