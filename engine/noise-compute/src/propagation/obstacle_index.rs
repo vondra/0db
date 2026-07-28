@@ -72,6 +72,22 @@ pub struct ObstacleIndex {
 /// Default grid pitch (m) — coarse enough that a 10 km ray walks ~160 cells.
 pub const OBSTACLE_GRID_CELL_M: f64 = 64.0;
 
+/// Flat per-index CSR view for GPU upload — see [`ObstacleIndex::gpu_view`].
+pub struct GpuGridView<'a> {
+    pub origin_lat: f64,
+    pub origin_lon: f64,
+    pub m_per_deg_lon: f64,
+    pub cell_m: f64,
+    pub min_x: f64,
+    pub min_y: f64,
+    pub cols: usize,
+    pub rows: usize,
+    pub cell_starts: &'a [u32],
+    pub edge_refs: &'a [u32],
+    /// `(x0, y0, x1, y1, height_m)` per edge, stride 5.
+    pub edges_xyxyh: Vec<f32>,
+}
+
 impl ObstacleIndex {
     /// Build from closed rings given as `(lat, lon)` sequences (first point
     /// need not be repeated at the end; the closing edge is added). Open
@@ -96,6 +112,31 @@ impl ObstacleIndex {
     /// Number of indexed edges (telemetry / memory accounting).
     pub fn edge_count(&self) -> usize {
         self.edges.len()
+    }
+
+    /// Flat CSR view for the CUDA lane (geodata-v2 1.6): grid frame constants
+    /// plus borrowed CSR arrays and a materialised `(x0,y0,x1,y1,height)`
+    /// edge array (kind/id are host-only concerns — the kernel keeps a
+    /// running max-δ, never an identity). The kernel walk must mirror
+    /// [`Self::crossings`] cell-for-cell; e2-full is the parity gate.
+    pub fn gpu_view(&self) -> GpuGridView<'_> {
+        let mut edges_xyxyh = Vec::with_capacity(self.edges.len() * 5);
+        for e in &self.edges {
+            edges_xyxyh.extend_from_slice(&[e.x0, e.y0, e.x1, e.y1, e.height_m]);
+        }
+        GpuGridView {
+            origin_lat: self.origin_lat,
+            origin_lon: self.origin_lon,
+            m_per_deg_lon: self.m_per_deg_lon,
+            cell_m: self.cell_m,
+            min_x: self.min_x,
+            min_y: self.min_y,
+            cols: self.cols,
+            rows: self.rows,
+            cell_starts: &self.cell_starts,
+            edge_refs: &self.edge_refs,
+            edges_xyxyh,
+        }
     }
 
     /// Exact crossings of the ray `src→rcv`, endpoint-exclusive

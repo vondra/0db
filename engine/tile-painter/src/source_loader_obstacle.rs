@@ -96,6 +96,27 @@ impl ObstacleData {
     }
 }
 
+/// Overwrite one tile's pre-baked `rx_refl_db` with the VECTOR enclosure —
+/// the SAME 150 × 150 m nine-probe footprint as the raster 3×3
+/// (`noise_compute::…::enclosure_db`; SPEC §3.8). The single bake shared by
+/// the CPU builder, the GPU runner, and e2-full (gg review 2026-07-28:
+/// three hand-copies drift).
+pub fn bake_tile_vector_rx_refl(
+    tile: &mut raster_reader::fused_tile_z13::FusedTileZ13,
+    set: &ObstacleSet,
+) {
+    use noise_compute::constants::ENCLOSURE_RADIUS_M;
+    use noise_compute::propagation::obstacle_index::enclosure_db;
+    use raster_reader::fused_tile_z13::TILE_PX;
+    for py in 0..TILE_PX {
+        let lat = tile.rx_lat[py];
+        for px in 0..TILE_PX {
+            tile.rx_refl_db[py * TILE_PX + px] =
+                enclosure_db(set, lat, tile.rx_lon[px], ENCLOSURE_RADIUS_M) as f32;
+        }
+    }
+}
+
 fn staging_root(h3r4_dir: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("QM_OBSTACLES_DIR") {
         return PathBuf::from(dir);

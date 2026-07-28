@@ -167,9 +167,13 @@ pub fn pack_tile(
     eta: f64,
     tw: f64,
     barriers: &[Barrier],
+    nsrc: usize,
 ) -> TileBuffers {
     let (lat_min, lon_min, inv, rows, cols) = halo_geom;
     let n = TILE_PX * TILE_PX;
+    // meta[12] = nsrc: the kernel reads the source count from meta because
+    // the freed launch-arg slot carries the obstacle pointer table (cudarc's
+    // tuple launch caps at 12 args).
     let meta = vec![
         rows as f64,
         cols as f64,
@@ -183,6 +187,7 @@ pub fn pack_tile(
         eta,
         tw,
         barriers.len() as f64,
+        nsrc as f64,
     ];
     let mut rxll = Vec::with_capacity(2 * TILE_PX);
     rxll.extend_from_slice(&tile.rx_lat);
@@ -208,36 +213,160 @@ pub fn pack_tile(
     }
 }
 
-/// Refuse to run a GPU surface build in vector-obstacle mode: the GPU
-/// scatter still samples the RASTER building channel and bakes no vector
-/// reflection (CUDA candidate port = geodata-v2 1.6). Failing loudly at
-/// startup keeps a hybrid CPU+GPU build from silently painting two physics
-/// — route the layer through the CPU builder or unset the flag. Lives in
-/// the lib (not the feature-gated bin) so hosts without CUDA compile and
-/// test the policy too.
-pub fn refuse_vector_mode() -> anyhow::Result<()> {
-    if noise_compute::propagation::obstacle_index::vector_buildings_enabled() {
-        anyhow::bail!(
-            "QM_VECTOR_BUILDINGS=1: gpu-surface has no vector obstacle support yet \
-             (geodata-v2 1.6) — build this layer on the CPU path or unset the flag"
-        );
+/// Host-flat obstacle store for the CUDA lane (geodata-v2 1.6): every
+/// per-cell [`ObstacleIndex`] of a region's [`ObstacleSet`] flattened into
+/// four uploadable arrays. Per index, `metas` carries 12 f64:
+/// `[origin_lat, origin_lon, m_per_deg_lon, cell_m, min_x, min_y, cols,
+/// rows, starts_off, refs_off, edges_off, n_refs_cells]` where the offsets
+/// index the SHARED `starts`/`refs`/`edges` arrays (edges stride 5:
+/// x0,y0,x1,y1,height — `GpuGridView` order). The kernel DDA mirrors
+/// `ObstacleIndex::crossings` per index; e2-full is the parity gate.
+pub struct ObstacleFlat {
+    pub n_indexes: usize,
+    pub metas: Vec<f64>,
+    pub starts: Vec<u32>,
+    pub refs: Vec<u32>,
+    pub edges: Vec<f32>,
+}
+
+pub fn flatten_obstacles(
+    set: &noise_compute::propagation::obstacle_index::ObstacleSet,
+) -> ObstacleFlat {
+    let mut flat = ObstacleFlat {
+        n_indexes: set.indexes.len(),
+        metas: Vec::with_capacity(set.indexes.len() * 12),
+        starts: Vec::new(),
+        refs: Vec::new(),
+        edges: Vec::new(),
+    };
+    for idx in &set.indexes {
+        let v = idx.gpu_view();
+        flat.metas.extend_from_slice(&[
+            v.origin_lat,
+            v.origin_lon,
+            v.m_per_deg_lon,
+            v.cell_m,
+            v.min_x,
+            v.min_y,
+            v.cols as f64,
+            v.rows as f64,
+            flat.starts.len() as f64,
+            flat.refs.len() as f64,
+            (flat.edges.len() / 5) as f64,
+            // slot 11: this index's starts extent — the kernel never reads
+            // it (its walk is bounded by cols×rows), but the flatten test
+            // proves the shared arrays tile exactly with it.
+            v.cell_starts.len() as f64,
+        ]);
+        flat.starts.extend_from_slice(v.cell_starts);
+        flat.refs.extend_from_slice(v.edge_refs);
+        flat.edges.extend_from_slice(&v.edges_xyxyh);
     }
-    Ok(())
+    flat
 }
 
 #[cfg(test)]
-mod vector_mode_tests {
-    /// The refusal must fire BEFORE any GPU work: a hybrid build script
-    /// routing road/rail here under QM_VECTOR_BUILDINGS=1 would otherwise
-    /// paint raster physics next to the CPU layers' vector physics
-    /// (gg review 2026-07-28). Env set is process-safe: this test binary
-    /// has no other reader of the OnceLock'd flag.
+mod obstacle_flat_tests {
+    /// Offsets must tile the shared arrays exactly — a mis-offset walks a
+    /// neighbouring cell-index's edges (silent physics corruption).
     #[test]
-    fn vector_mode_refused_at_startup() {
-        std::env::set_var("QM_VECTOR_BUILDINGS", "1");
-        let err = super::refuse_vector_mode().expect_err("must refuse vector mode");
-        assert!(err
-            .to_string()
-            .contains("gpu-surface has no vector obstacle support"));
+    fn flatten_offsets_are_consistent() {
+        use noise_compute::propagation::obstacle_index::{
+            ObstacleIndex, ObstacleKind, ObstacleSet,
+        };
+        let mut sets = Vec::new();
+        for (olat, olon) in [(50.0, 14.0), (50.5, 14.5)] {
+            let mut b = ObstacleIndex::builder(olat, olon);
+            let ring: Vec<(f64, f64)> = [(0.0, 0.0), (0.001, 0.0), (0.001, 0.001), (0.0, 0.001)]
+                .iter()
+                .map(|(dlat, dlon)| (olat + dlat, olon + dlon))
+                .collect();
+            b.add_ring(&ring, 10.0, ObstacleKind::Building, 0);
+            sets.push(std::sync::Arc::new(b.build()));
+        }
+        let set = ObstacleSet { indexes: sets };
+        let flat = super::flatten_obstacles(&set);
+        assert_eq!(flat.n_indexes, 2);
+        assert_eq!(flat.metas.len(), 24);
+        // Second index's offsets start exactly where the first index ends,
+        // and its extents tile the shared arrays completely.
+        let (starts_off2, refs_off2, edges_off2, n_cells2) = (
+            flat.metas[12 + 8] as usize,
+            flat.metas[12 + 9] as usize,
+            flat.metas[12 + 10] as usize,
+            flat.metas[12 + 11] as usize,
+        );
+        assert_eq!(flat.metas[11] as usize, starts_off2, "starts contiguous");
+        assert_eq!(starts_off2 + n_cells2, flat.starts.len(), "starts tiled");
+        assert_eq!(edges_off2, 4, "first ring = 4 edges");
+        assert_eq!((edges_off2 + 4) * 5, flat.edges.len(), "edges tiled");
+        // per-index refs extent = its last cell_start (CSR total)
+        assert_eq!(
+            refs_off2 + *flat.starts.last().unwrap() as usize,
+            flat.refs.len(),
+            "refs tiled"
+        );
+        assert!(flat.edges.len() % 5 == 0 && !flat.refs.is_empty());
     }
 }
+
+// ---- Vector-obstacle GPU upload (geodata-v2 1.6) — shared by gpu-surface
+// and the e2-full validator, so it lives here behind the gpu feature.
+#[cfg(feature = "gpu")]
+mod obstacle_upload {
+    use anyhow::{Context, Result};
+    use cudarc::driver::{CudaDevice, CudaSlice};
+    use std::sync::Arc;
+
+    /// The region's vector obstacles resident on the GPU. `table` is the 5-slot
+    /// pointer table the kernel dereferences ({n, metas, starts, refs, edges});
+    /// the four `_`-prefixed slices only exist to keep those device allocations
+    /// alive for as long as the table can be launched with. Raster mode = a
+    /// 1-element `[0]` table.
+    pub struct ObstDev {
+        pub table: CudaSlice<u64>,
+        _metas: Option<CudaSlice<f64>>,
+        _starts: Option<CudaSlice<u32>>,
+        _refs: Option<CudaSlice<u32>>,
+        _edges: Option<CudaSlice<f32>>,
+    }
+
+    pub fn upload_obstacles(
+        dev: &Arc<CudaDevice>,
+        set: Option<&noise_compute::propagation::obstacle_index::ObstacleSet>,
+    ) -> Result<ObstDev> {
+        use cudarc::driver::DevicePtr;
+        let Some(set) = set else {
+            return Ok(ObstDev {
+                table: dev.htod_copy(vec![0u64]).context("obst off-table")?,
+                _metas: None,
+                _starts: None,
+                _refs: None,
+                _edges: None,
+            });
+        };
+        let flat = crate::flatten_obstacles(set);
+        let metas = dev.htod_copy(flat.metas).context("obst metas")?;
+        let starts = dev.htod_copy(flat.starts).context("obst starts")?;
+        let refs = dev.htod_copy(flat.refs).context("obst refs")?;
+        let edges = dev.htod_copy(flat.edges).context("obst edges")?;
+        let table = dev
+            .htod_copy(vec![
+                flat.n_indexes as u64,
+                *metas.device_ptr(),
+                *starts.device_ptr(),
+                *refs.device_ptr(),
+                *edges.device_ptr(),
+            ])
+            .context("obst table")?;
+        Ok(ObstDev {
+            table,
+            _metas: Some(metas),
+            _starts: Some(starts),
+            _refs: Some(refs),
+            _edges: Some(edges),
+        })
+    }
+}
+#[cfg(feature = "gpu")]
+pub use obstacle_upload::{upload_obstacles, ObstDev};

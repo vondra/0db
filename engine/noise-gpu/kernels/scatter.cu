@@ -293,6 +293,167 @@ __device__ void fit_plane(const double* t, const double* prof, int lo, int hi,
     *b = (sz - (*a) * sx) / nn;
 }
 
+// ---- diffraction::fit_plane_with_point — fit_plane + the diffraction point D
+// folded into the regression (the explicit-edge δ* fits, SPEC §3.5b: D
+// joins BOTH mean planes exactly once).
+__device__ void fit_plane_pt(const double* t, const double* prof, int lo, int hi,
+                             double extra_t, double extra_z,
+                             double t_off, double dist, double* a, double* b) {
+    double sx = 0, sz = 0, sxx = 0, sxz = 0;
+    double nn = 0.0;
+    for (int i = lo; i < hi; i++) {
+        double x = (t[i] - t_off) * dist, z = prof[i];
+        sx += x; sz += z; sxx += x * x; sxz += x * z; nn += 1.0;
+    }
+    { // the D point
+        double x = (extra_t - t_off) * dist;
+        sx += x; sz += extra_z; sxx += x * x; sxz += x * extra_z; nn += 1.0;
+    }
+    double denom = nn * sxx - sx * sx;
+    if (fabs(denom) < 1e-9) { *a = 0.0; *b = sz / nn; return; }
+    *a = (nn * sxz - sx * sz) / denom;
+    *b = (sz - (*a) * sx) / nn;
+}
+
+// ---- diffraction::compute_single_edge_at δ* part — explicit edge (t_e over
+// LERPed bare ground), strict partitions (src side t < t_e, rcv side t > t_e),
+// D in both fits. Mirrors the CPU in f64 (mod nvcc FMA contraction; the
+// e2-full vector run gates the result).
+__device__ double dstar_at(const double* t, const double* bare, int n, double t_e,
+                           double dist, double src_h, double rcv_h) {
+    double d_sg = t_e * dist, d_rg = (1.0 - t_e) * dist;
+    // partition points: p_lo = first i with t[i] >= t_e; p_hi = first i with t[i] > t_e
+    int p_lo = 0; while (p_lo < n && t[p_lo] < t_e) p_lo++;
+    int p_hi = 0; while (p_hi < n && t[p_hi] <= t_e) p_hi++;
+    // bare ground under the edge, LERPed between neighbours (i1 = clamp(p_hi,1,n-1))
+    int i1 = p_hi < 1 ? 1 : (p_hi > n - 1 ? n - 1 : p_hi);
+    double t0 = t[i1 - 1], t1 = t[i1];
+    double frac = (t1 > t0) ? fmin(fmax((t_e - t0) / (t1 - t0), 0.0), 1.0) : 0.0;
+    double d_top = bare[i1 - 1] + frac * (bare[i1] - bare[i1 - 1]);
+    double a_s, b_s; fit_plane_pt(t, bare, 0, p_lo, t_e, d_top, 0.0, dist, &a_s, &b_s);
+    double a_r, b_r; fit_plane_pt(t, bare, p_hi, n, t_e, d_top, t_e, dist, &a_r, &b_r);
+    double plane_rcv_end = a_r * d_rg + b_r;
+    double s_star = 2.0 * b_s - ((double)bare[0] + src_h);
+    double r_star = 2.0 * plane_rcv_end - ((double)bare[n - 1] + rcv_h);
+    double d_sd = sqrt(d_sg * d_sg + (d_top - s_star) * (d_top - s_star));
+    double d_dr = sqrt(d_rg * d_rg + (r_star - d_top) * (r_star - d_top));
+    double d_sr = sqrt(dist * dist + (r_star - s_star) * (r_star - s_star));
+    double v = d_sd + d_dr - d_sr;
+    return v > 0.0 ? v : 0.0;
+}
+
+// ---- obstacle_index::segment_intersection_t — chainage of ray×edge, t strictly
+// inside (0,1), hit within the segment (u ∈ [0,1] inclusive), collinear → none.
+__device__ __forceinline__ bool seg_isect_t(
+    double sx, double sy, double dx, double dy,
+    double x0, double y0, double x1, double y1, double* t_out)
+{
+    double ex = x1 - x0, ey = y1 - y0;
+    double denom = dx * ey - dy * ex;
+    if (denom == 0.0) return false;
+    double wx = x0 - sx, wy = y0 - sy;
+    double tt = (wx * ey - wy * ex) / denom;
+    double u = (wx * dy - wy * dx) / denom;
+    if (tt > 0.0 && tt < 1.0 && u >= 0.0 && u <= 1.0) { *t_out = tt; return true; }
+    return false;
+}
+
+// ---- ObstacleSet::crossings + path_effects §5b fused for the GPU: walk every
+// per-cell index's grid along the ray (the same Amanatides & Woo shape and
+// clamps as the CPU walk), and for each exact crossing evaluate the candidate
+// δ ON THE FLY (terrain LERPed between the ray's bare samples, LOS-gated),
+// keeping only the max-δ winner — no sort, no dedup (duplicate hits evaluate
+// identically, max() is idempotent), no dynamic memory. `obst` is the
+// pointer-table {n, metas, starts, refs, edges} built by gpu_surface.
+// Exclusion radius: the GPU lanes are line layers (roads/rail), which pass 0
+// on the CPU too — no gate here by construction.
+__device__ void obstacle_best_candidate(
+    const unsigned long long* obst,
+    double src_lat, double src_lon, double rcv_lat, double rcv_lon,
+    const double* t, const double* bare, int n,
+    double dist, double se, double re, double dsr,
+    int* have, double* cand_t, double* cand_top)
+{
+    *have = 0;
+    double best_delta = 0.0;
+    int n_idx = (int)obst[0];
+    const double* metas = (const double*)obst[1];
+    const unsigned int* starts = (const unsigned int*)obst[2];
+    const unsigned int* refs = (const unsigned int*)obst[3];
+    const float* edges = (const float*)obst[4];
+    for (int gi = 0; gi < n_idx; gi++) {
+        const double* m = &metas[gi * 12];
+        double mlon = m[2], cell = m[3], minx = m[4], miny = m[5];
+        int cols = (int)m[6], rows = (int)m[7];
+        size_t soff = (size_t)m[8], roff = (size_t)m[9], eoff = (size_t)m[10];
+        double sx = (src_lon - m[1]) * mlon, sy = (src_lat - m[0]) * M_LAT;
+        double rx = (rcv_lon - m[1]) * mlon, ry = (rcv_lat - m[0]) * M_LAT;
+        double dx = rx - sx, dy = ry - sy;
+        // Slab reject (GPU-only perf; results identical — edges only exist
+        // inside the grid): a ray whose bbox misses this index's extent
+        // cannot cross any of its edges. A typical region holds 7 per-cell
+        // indexes and a ray touches 1–3.
+        double gx1 = minx + (double)cols * cell, gy1 = miny + (double)rows * cell;
+        if (fmax(sx, rx) < minx || fmin(sx, rx) > gx1 ||
+            fmax(sy, ry) < miny || fmin(sy, ry) > gy1) continue;
+        double inv_cell = 1.0 / cell;
+        long cx = (long)floor((sx - minx) * inv_cell); cx = cx < 0 ? 0 : (cx > cols - 1 ? cols - 1 : cx);
+        long cy = (long)floor((sy - miny) * inv_cell); cy = cy < 0 ? 0 : (cy > rows - 1 ? rows - 1 : cy);
+        long end_cx = (long)floor((rx - minx) * inv_cell); end_cx = end_cx < 0 ? 0 : (end_cx > cols - 1 ? cols - 1 : end_cx);
+        long end_cy = (long)floor((ry - miny) * inv_cell); end_cy = end_cy < 0 ? 0 : (end_cy > rows - 1 ? rows - 1 : end_cy);
+        long step_x = dx >= 0.0 ? 1 : -1, step_y = dy >= 0.0 ? 1 : -1;
+        double t_delta_x = dx != 0.0 ? fabs(cell / dx) : 1e300;
+        double t_delta_y = dy != 0.0 ? fabs(cell / dy) : 1e300;
+        double next_xb = minx + (double)(cx + (dx >= 0.0 ? 1 : 0)) * cell;
+        double next_yb = miny + (double)(cy + (dy >= 0.0 ? 1 : 0)) * cell;
+        double t_max_x = dx != 0.0 ? fabs((next_xb - sx) / dx) : 1e300;
+        double t_max_y = dy != 0.0 ? fabs((next_yb - sy) / dy) : 1e300;
+        long guard = (long)cols + (long)rows + 4;
+        while (1) {
+            size_t c = (size_t)cy * (size_t)cols + (size_t)cx;
+            unsigned int lo = starts[soff + c], hi = starts[soff + c + 1];
+            for (unsigned int k = lo; k < hi; k++) {
+                const float* e = &edges[(eoff + (size_t)refs[roff + k]) * 5];
+                double tt;
+                if (!seg_isect_t(sx, sy, dx, dy,
+                                 (double)e[0], (double)e[1], (double)e[2], (double)e[3], &tt))
+                    continue;
+                // path_effects §5b: terrain LERP between neighbouring bare
+                // samples (p = first sample with t > tt, clamped to [1, n-1]).
+                int p = 1; while (p < n - 1 && t[p] <= tt) p++;
+                double t0 = t[p - 1], t1 = t[p];
+                double frac = (t1 > t0) ? (tt - t0) / (t1 - t0) : 0.0;
+                double terr = bare[p - 1] + frac * (bare[p] - bare[p - 1]);
+                double top = terr + (double)e[4];
+                double los = se + (re - se) * tt;
+                if (top <= los) continue;
+                double d_sg = tt * dist, d_rg = (1.0 - tt) * dist;
+                double delta = sqrt(d_sg * d_sg + (top - se) * (top - se))
+                             + sqrt(d_rg * d_rg + (top - re) * (top - re)) - dsr;
+                // Strict max + lower-t tie-break: the CPU walks candidates
+                // t-sorted and keeps the FIRST max (path_effects §5b), i.e.
+                // the lowest-t among f64-equal δ; DDA discovery order is not
+                // t-sorted across edges, so break ties explicitly. Bounded
+                // deviation vs CPU (documented, gg review 2026-07-28 #4): a
+                // vertex double-hit (two edges of one ring at the same point)
+                // is collapsed to one candidate by the CPU's (id,t) dedup but
+                // evaluated twice here — the two δ agree to the last ulp, so
+                // only an ulp-level tie can pick the other edge of the SAME
+                // geometry; the bands are identical to fp32.
+                if (!*have || delta > best_delta ||
+                    (delta == best_delta && tt < *cand_t)) {
+                    *have = 1; best_delta = delta; *cand_t = tt; *cand_top = top;
+                }
+            }
+            if ((cx == end_cx && cy == end_cy) || guard <= 0) break;
+            guard--;
+            if (t_max_x < t_max_y) { t_max_x += t_delta_x; cx += step_x; }
+            else                   { t_max_y += t_delta_y; cy += step_y; }
+            if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) break;
+        }
+    }
+}
+
 // ---- diffraction::compute_delta_star — CNOSSOS §2.5.6(c) Rayleigh δ* (mirror
 // source/receiver across per-side mean-ground planes; OLS on BARE earth).
 __device__ double dstar(const double* t, const double* prof, int n, int d_idx,
@@ -323,37 +484,16 @@ __device__ void maek_single(float delta, float dstar_v, float* bands) {
     }
 }
 
-// ---- horizon::single_edge_atten — the shared single-δ primitive. δ geometry +
-// max-δ edge run on `top`; the §2.5.6(c) Rayleigh δ* OLS always on `bare`. Heights
-// above bare earth (0.05 / 0.5 floors). Writes 8 bands. Terrain calls it with
-// top==bare; screening with top==composite, bare==elevation.
-__device__ void single_edge_bands(const double* t, const double* top, const double* bare,
-                                  int n, double dist, double src_alt, double rcv_alt, float* out) {
-    for (int i = 0; i < NB; i++) out[i] = 0.0f;
-    double src_h = fmax(src_alt - bare[0], 0.05);
-    double rcv_h = fmax(rcv_alt - bare[n - 1], 0.5);
-    double se = bare[0] + src_h, re = bare[n - 1] + rcv_h;
-    double dsr = sqrt(dist * dist + (re - se) * (re - se));
-    int idx = mdidx(t, top, n, dist, se, re, dsr);
-    if (idx < 0) return;
-    if (top[idx] <= se + (re - se) * t[idx]) return;
-    // stable-δ in fp32 (same reformulation as mdidx); δ* stays f64 (1× per edge).
-    float distf = (float)dist, ti = (float)t[idx];
-    float dsg = ti * distf, drg = distf - dsg;
-    float dzsb = (float)(top[idx] - se), dzbr = (float)(top[idx] - re), dzsr = (float)(re - se);
-    float dsb = sqrtf(dsg * dsg + dzsb * dzsb), dbr = sqrtf(drg * drg + dzbr * dzbr);
-    float delta = dzsb * dzsb / (dsb + dsg) + dzbr * dzbr / (dbr + drg) - dzsr * dzsr / (float)(dsr + dist);
-    float dstar_v = (float)dstar(t, bare, n, idx, dist, src_h, rcv_h);
+// ---- diffraction::curved_path_difference + mix_fav_hom shared tail: hom
+// bands from (delta, δ*), favourable bands from the curved-ray δ_F over the
+// SAME chords, then the P_FAV energy mix ((2.5.24)/(2.5.25)/(2.5.9)). Chords
+// + arc difference in f64: the near-equal-kilometres cancellation loses ~4
+// digits — fatal in fp32 (the mdidx lesson), comfortable in f64. Mix itself
+// is dB-scale fp32.
+__device__ void maek_mixed(float delta, float dstar_v,
+                           double dsb_d, double dbr_d, double dsr, float* out) {
     maek_single(delta, dstar_v, out);
     if (FAVOURABLE_MIXING) {
-        // diffraction.rs::curved_path_difference + mix_fav_hom mirror
-        // ((2.5.24)/(2.5.25)/(2.5.9)). Chords + arc difference in f64: the
-        // near-equal-kilometres cancellation loses ~4 digits — fatal in fp32
-        // (the mdidx lesson), comfortable in f64. Mix itself is dB-scale fp32.
-        double dsg_d = t[idx] * dist, drg_d = dist - dsg_d;
-        double dzsb_d = top[idx] - se, dzbr_d = top[idx] - re;
-        double dsb_d = sqrt(dsg_d * dsg_d + dzsb_d * dzsb_d);
-        double dbr_d = sqrt(drg_d * drg_d + dzbr_d * dzbr_d);
         double gamma = fmax(FAV_GAMMA_MIN, FAV_GAMMA_PER_DSR * dsr);
         double delta_f = 2.0 * gamma * (asin(dsb_d / (2.0 * gamma))
             + asin(dbr_d / (2.0 * gamma)) - asin(dsr / (2.0 * gamma)));
@@ -365,6 +505,69 @@ __device__ void single_edge_bands(const double* t, const double* top, const doub
             out[i] = -10.0f * log10f(e);
         }
     }
+}
+
+// ---- horizon::single_edge_atten + path_effects §5b/5c — the shared single-δ
+// primitive with VECTOR-candidate competition. δ geometry + max-δ edge run on
+// `top`; the §2.5.6(c) Rayleigh δ* OLS always on `bare`. Heights above bare
+// earth (0.05 / 0.5 floors). A vector candidate (exact crossing at cand_t,
+// absolute top cand_top — from obstacle_best_candidate) competes with the
+// cadence sample edge ON δ (the actual selection criterion); the winner's
+// bands are emitted. Candidate δ* uses the explicit-edge fits with D in both
+// planes (dstar_at). Writes 8 bands. Terrain calls it with top==bare and no
+// candidate; screening with top==composite, bare==elevation.
+__device__ void single_edge_bands_cand(const double* t, const double* top, const double* bare,
+                                       int n, double dist, double src_alt, double rcv_alt,
+                                       int have_cand, double cand_t, double cand_top,
+                                       float* out) {
+    for (int i = 0; i < NB; i++) out[i] = 0.0f;
+    double src_h = fmax(src_alt - bare[0], 0.05);
+    double rcv_h = fmax(rcv_alt - bare[n - 1], 0.5);
+    double se = bare[0] + src_h, re = bare[n - 1] + rcv_h;
+    double dsr = sqrt(dist * dist + (re - se) * (re - se));
+    int idx = mdidx(t, top, n, dist, se, re, dsr);
+    bool sample_ok = idx >= 0 && top[idx] > se + (re - se) * t[idx];
+    float delta_samp = 0.0f;
+    double s_dsb_d = 0.0, s_dbr_d = 0.0, s_delta_d = 0.0;
+    if (sample_ok) {
+        // stable-δ in fp32 (same reformulation as mdidx); δ* stays f64 (1× per edge).
+        float distf = (float)dist, ti = (float)t[idx];
+        float dsg = ti * distf, drg = distf - dsg;
+        float dzsb = (float)(top[idx] - se), dzbr = (float)(top[idx] - re), dzsr = (float)(re - se);
+        float dsb = sqrtf(dsg * dsg + dzsb * dzsb), dbr = sqrtf(drg * drg + dzbr * dzbr);
+        delta_samp = dzsb * dzsb / (dsb + dsg) + dzbr * dzbr / (dbr + drg)
+                   - dzsr * dzsr / (float)(dsr + dist);
+        // f64 chords: reused by the favourable arc AND the winner compare —
+        // the CPU compares two f64 deltas (path_effects §5c), so deciding on
+        // the fp32 stable form would flip near-ties (gg review 2026-07-28 #3).
+        double dsg_d = t[idx] * dist, drg_d = dist - dsg_d;
+        double dzsb_d = top[idx] - se, dzbr_d = top[idx] - re;
+        s_dsb_d = sqrt(dsg_d * dsg_d + dzsb_d * dzsb_d);
+        s_dbr_d = sqrt(drg_d * drg_d + dzbr_d * dzbr_d);
+        s_delta_d = s_dsb_d + s_dbr_d - dsr;
+    }
+    if (have_cand) {
+        // path_effects §5c: candidate vs cadence edge, by δ in f64 (both
+        // above-LOS by construction; the candidate was LOS-gated in the DDA).
+        double d_sg = cand_t * dist, d_rg = (1.0 - cand_t) * dist;
+        double dsb_d = sqrt(d_sg * d_sg + (cand_top - se) * (cand_top - se));
+        double dbr_d = sqrt(d_rg * d_rg + (cand_top - re) * (cand_top - re));
+        double delta_cand = dsb_d + dbr_d - dsr;
+        if (!sample_ok || delta_cand > s_delta_d) {
+            float dstar_v = (float)dstar_at(t, bare, n, cand_t, dist, src_h, rcv_h);
+            maek_mixed((float)delta_cand, dstar_v, dsb_d, dbr_d, dsr, out);
+            return;
+        }
+    }
+    if (!sample_ok) return;
+    float dstar_v = (float)dstar(t, bare, n, idx, dist, src_h, rcv_h);
+    maek_mixed(delta_samp, dstar_v, s_dsb_d, s_dbr_d, dsr, out);
+}
+
+__device__ __forceinline__ void single_edge_bands(const double* t, const double* top,
+                                                  const double* bare, int n, double dist,
+                                                  double src_alt, double rcv_alt, float* out) {
+    single_edge_bands_cand(t, top, bare, n, dist, src_alt, rcv_alt, 0, 0.0, 0.0, out);
 }
 
 // ---- path_effects::terrain_attenuation — bare-earth diffraction. Guard (short
@@ -448,7 +651,7 @@ __device__ __forceinline__ void line_source(
     int rows, int cols, double lat_min, double lon_min, double inv, const double* bb,
     double rlat, double rlon, double ralt, double refl, double eta,
     const double* seg, const double* sp, const float* em,
-    const double* barr, int nbarr,
+    const double* barr, int nbarr, const unsigned long long* obst,
     double* tprof, double* ed, double* comp,
     unsigned char* bld, unsigned char* forr, unsigned char* imdp,
     float& e0, float& e1, float& e2, double& kept, double& skipped)
@@ -539,21 +742,40 @@ __device__ __forceinline__ void line_source(
     float terr[NB], screen[NB], veg[NB];
     terrain_bands(tprof, ed, n, dend, salt, ralt, terr);
     for (int i = 0; i < NB; i++) screen[i] = 0.0f;
+    // Vector obstacles (geodata-v2, QM_VECTOR_BUILDINGS=1): exact crossings
+    // REPLACE the raster building channel (path_effects
+    // replace_sample_buildings) — the composite keeps only barriers, and the
+    // max-δ candidate from the obstacle grids competes with the cadence edge.
+    bool vec_mode = obst[0] != 0ULL;
+    int have_cand = 0;
+    double cand_t = 0.0, cand_top = 0.0;
+    if (vec_mode && n >= 3 && dend >= 30.0) {
+        double src_h = fmax(salt - ed[0], 0.05);
+        double rcv_h = fmax(ralt - ed[n - 1], 0.5);
+        double se = ed[0] + src_h, re = ed[n - 1] + rcv_h;
+        double dsr = sqrt(dend * dend + (re - se) * (re - se));
+        obstacle_best_candidate(obst, cplat, cplon, rlat, rlon,
+                                tprof, ed, n, dend, se, re, dsr,
+                                &have_cand, &cand_t, &cand_top);
+    }
     // A barrier over open ground has no building cell — it must enable the
     // screening pass too, or walls outside towns are silently ignored.
-    bool anyb = barrier_hit;
-    for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
+    bool anyb = barrier_hit || have_cand;
+    if (!vec_mode)
+        for (int i = 0; i < n; i++) if (bld[i] > 0) { anyb = true; break; }
     if (anyb && n >= 3 && dend >= 30.0) {
         for (int i = 0; i < n; i++) {
             // Endpoint exclusion (tprof ∈ (0,1)) applies to building AND
             // barrier: a wall snapped onto an endpoint sample must not screen
             // (the CPU composite gate, path_effects.rs §3).
+            double bh = vec_mode ? 0.0 : (double)bld[i];
             double above = (tprof[i] > 0.0 && tprof[i] < 1.0)
-                         ? fmax((double)bld[i], (double)barr_at[i]) : 0.0;
+                         ? fmax(bh, (double)barr_at[i]) : 0.0;
             comp[i] = ed[i] + above;
         }
         float comb[NB];
-        single_edge_bands(tprof, comp, ed, n, dend, salt, ralt, comb);
+        single_edge_bands_cand(tprof, comp, ed, n, dend, salt, ralt,
+                               have_cand, cand_t, cand_top, comb);
         for (int i = 0; i < NB; i++) screen[i] = fmaxf(comb[i] - terr[i], 0.0f);
     }
     float gimd = path_integral_imd(tprof, imdp, n);
@@ -589,10 +811,12 @@ __device__ __forceinline__ void line_source(
 // ALL sources (reach cull is inside line_source); `line_binned` is the pre-binned
 // variant. Per-period energy in f32 (matching TileAccumulator), kept in f64.
 //   meta = [rows, cols, lat_min, lon_min, inv, north, south, west, east, eta,
-//           tile_width, nbarr]
+//           tile_width, nbarr, nsrc]
 //   inner = TPX×TPX tile DEM; cover = halo [building,forest,imd] u8; sp = nsrc×4.
 //   barr = nbarr×4 {lat, lon, height_m, dist_m} — this tile's sorted for_tile()
-//   barrier slice (nbarr in meta[11]; cudarc's tuple launch caps at 12 args).
+//   barrier slice (nbarr in meta[11]). obst = the vector-obstacle pointer
+//   table {n, metas, starts, refs, edges} (obst[0]==0 ⇒ raster mode); nsrc
+//   rides in meta[12] because cudarc's tuple launch caps at 12 args.
 extern "C" __global__ void line(
     const float*  __restrict__ elev,
     const float*  __restrict__ inner,
@@ -604,7 +828,8 @@ extern "C" __global__ void line(
     const double* __restrict__ rxll,
     const float*  __restrict__ rxar,
     const double* __restrict__ barr,
-    int nsrc, float* __restrict__ out)
+    const unsigned long long* __restrict__ obst,
+    float* __restrict__ out)
 {
     int pix = blockIdx.x * blockDim.x + threadIdx.x;
     if (pix >= TPX * TPX) return;
@@ -612,6 +837,7 @@ extern "C" __global__ void line(
     double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
     const double* bb = &meta[5];   // north_lat, south_lat, west_lon, east_lon
     double eta = meta[9];
+    int nsrc = (int)meta[12];
     // Tiled (swizzled) pixel mapping: consecutive threads fill a 16×16 pixel tile
     // before the next, so each warp/block covers a COMPACT 2D region — its rays to a
     // given source overlap, keeping the terrain halo L2-hot. Row-major decomposition
@@ -633,7 +859,7 @@ extern "C" __global__ void line(
     for (int s = 0; s < nsrc; s++)
         line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                     rlat, rlon, ralt, refl, eta, &seg[s * 4], &sp[s * 12], &semis[s * 24],
-                    barr, nbarr,
+                    barr, nbarr, obst,
                     tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
     out[opix * 3 + 0] = e0;
     out[opix * 3 + 1] = e1;
@@ -663,7 +889,8 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused
     const double* __restrict__ rxll,
     const float*  __restrict__ rxar,
     const double* __restrict__ barr,
-    int nsrc, float* __restrict__ out)
+    const unsigned long long* __restrict__ obst,
+    float* __restrict__ out)
 {
     int bid = blockIdx.x, lane = threadIdx.x;
     if (bid >= BIN_TILES * BIN_TILES || lane >= BIN_W * BIN_W) return;
@@ -671,6 +898,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused
     double lat_min = meta[2], lon_min = meta[3], inv = meta[4];
     const double* bb = &meta[5];
     double eta = meta[9];
+    int nsrc = (int)meta[12];
     int by = bid / BIN_TILES, bx = bid % BIN_TILES;
     int py0 = by * BIN_W, py1 = by * BIN_W + BIN_W - 1;
     int px0 = bx * BIN_W, px1 = bx * BIN_W + BIN_W - 1;
@@ -706,7 +934,7 @@ extern "C" __global__ void __launch_bounds__(BIN_W * BIN_W, 2) line_binned_fused
                 line_source(elev, inner, cover, rows, cols, lat_min, lon_min, inv, bb,
                             rlat, rlon, ralt, refl, eta, &seg[(base + j) * 4],
                             &sp[(base + j) * 12], &semis[(base + j) * 24],
-                            barr, nbarr,
+                            barr, nbarr, obst,
                             tprof, ed, comp, bld, forr, imdp, e0, e1, e2, kept, skipped);
         __syncthreads();
     }

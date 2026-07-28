@@ -70,14 +70,36 @@ fn main() -> Result<()> {
     let ll = h3o::LatLng::from(cell);
     let admin = noise_compute::admin::admin_for_latlng(ll.lat(), ll.lng());
     let rail = RailData::load_for_r4s(Path::new(&h3r4), &ring, admin)?.into_rows();
+    // Vector obstacles (geodata-v2 1.6): QM_VECTOR_BUILDINGS=1 loads the
+    // region's obstacle store into BOTH lanes — the CPU reference threads the
+    // set through scatter_tile_with_cfg, the GPU gets the flattened grids —
+    // so this validator IS the vector-parity gate.
+    let obstacle_data = tile_painter::source_loader_obstacle::ObstacleData::load_for_r4s(
+        Path::new(&h3r4),
+        r4,
+        &ring,
+    )?;
     let bn = default_batch_size();
     let (bx, by) = ((x / bn) * bn, (y / bn) * bn);
-    let batch = TileBatch::build(z, bx, by, bn, halo_m, &rasters);
+    let mut batch = TileBatch::build(z, bx, by, bn, halo_m, &rasters);
+    if let Some(set) = obstacle_data.set() {
+        let tile = &mut batch.tiles[((y - by) * bn + (x - bx)) as usize];
+        tile_painter::source_loader_obstacle::bake_tile_vector_rx_refl(tile, set);
+        eprintln!("vector obstacles: {} edges", set.edge_count());
+    }
     let tile = &batch.tiles[((y - by) * bn + (x - bx)) as usize];
     let halo = &tile.halo;
     let (lat_min, lon_min, inv, rows, cols) = halo.geom();
     let nsrc = rail.len();
     eprintln!("tile {x}/{y} R4 {r4:015x} | rail rows {nsrc} | halo {rows}×{cols}");
+    eprintln!(
+        "MODE: {}",
+        if noise_compute::propagation::obstacle_index::vector_buildings_enabled() {
+            "vector"
+        } else {
+            "raster"
+        }
+    );
 
     // ---- packed device buffers ----
     let n = TILE_PX * TILE_PX;
@@ -94,6 +116,7 @@ fn main() -> Result<()> {
         eta,
         tw,
         0.0, // nbarr — the e2 CPU reference below is barrier-free (`no_barriers`)
+        nsrc as f64,
     ];
     // sp = 12/source: length/reach/height/bridge ++ 8 host-precomputed Lden band
     // weights (Σ_p LDEN_W[p]·emission_lin[p][i]) — mirrors pack_sources so the shared
@@ -147,10 +170,18 @@ fn main() -> Result<()> {
     // identical energy-budget skip with the same η (its budget_eta() reads the same
     // SURFACE_BUDGET_ETA env this bin clamps into `eta` above), and accumulates f32
     // into a TileAccumulator whose `.energy` is the exact [py][px][period] layout
-    // of `cpu`. `None` cadence = the EXACT ray-march (build_path_profile), matching
-    // the GPU kernel's default mstride=1. Barrier-free (meta nbarr = 0 above), so an
-    // empty barrier slice. Skipped under NOISE_GPU_ONLY — the GPU→u8 baseline diff
-    // stands alone.
+    // of `cpu`. The cadence MUST match the kernel's compile-time coarse-middle
+    // mirror (scatter.cu SHADOW_MID_STRIDE 3 / 600 m zones — the CPU env
+    // DEFAULTS): a `None` (exact) reference conflates cadence differences with
+    // GPU drift (gg review 2026-07-28 #1; candidate terrain LERP and δ*
+    // partitions ride the samples). Barrier-free (meta nbarr = 0 above), so an
+    // empty barrier slice. Skipped under NOISE_GPU_ONLY — the GPU→u8 baseline
+    // diff stands alone.
+    let kernel_cadence = Some(noise_compute::propagation::path_profile::CoarseMid {
+        src_zone_m: 600.0,
+        rx_zone_m: 600.0,
+        mid_stride: 3,
+    });
     let mut cpu = vec![0f32; n * 3];
     if !gpu_only {
         let no_barriers: &[Barrier] = &[];
@@ -159,10 +190,50 @@ fn main() -> Result<()> {
             tile,
             &rail,
             no_barriers,
+            obstacle_data.set(),
             &mut accum,
-            None,
+            kernel_cadence,
         );
         cpu.copy_from_slice(&accum.energy);
+    }
+    // Vector-mode gate hardening (gg review 2026-07-28 #2): the parity claim
+    // requires (a) the store actually LOADED — a missing ring silently
+    // returning off() must fail the run, not validate raster-vs-raster; (b) a
+    // CPU reference to compare against; (c) proof the candidate lane FIRED —
+    // the same CPU scatter WITHOUT obstacles must differ somewhere, else the
+    // tile exercises nothing and the gate is vacuous.
+    let vector_mode = noise_compute::propagation::obstacle_index::vector_buildings_enabled();
+    if vector_mode {
+        anyhow::ensure!(
+            obstacle_data.set().is_some(),
+            "QM_VECTOR_BUILDINGS=1 but the obstacle store did not load for this region \
+             — the vector parity gate would silently validate raster mode"
+        );
+        anyhow::ensure!(
+            !gpu_only,
+            "QM_VECTOR_BUILDINGS=1 with NOISE_GPU_ONLY removes the CPU reference — \
+             the vector parity gate needs both lanes"
+        );
+        let mut raster_accum = TileAccumulator::new();
+        tile_painter::scatter_line::scatter_tile_with_cfg(
+            tile,
+            &rail,
+            &[],
+            None,
+            &mut raster_accum,
+            kernel_cadence,
+        );
+        let n_diff = cpu
+            .iter()
+            .zip(raster_accum.energy.iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        anyhow::ensure!(
+            n_diff > 0,
+            "vector CPU reference is identical to the raster reference — no candidate \
+             fired on this tile; pick a tile with obstacle coverage"
+        );
+        eprintln!("vector lane active: {n_diff} CPU cells differ from raster mode");
     }
 
     // ---- GPU ----
@@ -200,6 +271,7 @@ fn main() -> Result<()> {
     // One zero row — meta nbarr = 0, the kernel never reads it (cuMemAlloc
     // rejects 0-byte buffers).
     let d_barr = dev.htod_copy(vec![0.0f64; 4]).expect("barr");
+    let obst = noise_gpu::upload_obstacles(&dev, obstacle_data.set()).expect("obstacles");
     let mut d_out = dev.alloc_zeros::<f32>(n * 3).expect("out");
     let block: u32 = env("NOISE_GPU_BLOCK", "128").parse().unwrap_or(128);
     let cfg = LaunchConfig {
@@ -222,7 +294,8 @@ fn main() -> Result<()> {
     let t = std::time::Instant::now();
     unsafe {
         // line (pixel-major) and line_binned_fused (binned) share the ARG tuple
-        // (…, barr, nsrc, out); only the launch GEOMETRY differs (binned_launch above).
+        // (…, barr, obst, out); only the launch GEOMETRY differs (binned_launch
+        // above). nsrc rides in meta[12].
         f.launch(
             cfg,
             (
@@ -236,7 +309,7 @@ fn main() -> Result<()> {
                 &d_rxll,
                 &d_rxar,
                 &d_barr,
-                nsrc as i32,
+                &obst.table,
                 &mut d_out,
             ),
         )
@@ -288,6 +361,13 @@ fn main() -> Result<()> {
                  benign (scattered, popup-corrected; docs/dev/heatmap-seam-guarantee.md)"
             );
         }
+        // HARD GATE (gg review 2026-07-28 #2: mismatch stats must be able to
+        // FAIL the run, not just print): a zero-sided cell = the lanes
+        // disagree on audibility itself — never fp32 noise.
+        anyhow::ensure!(
+            nzero == 0,
+            "e2 GATE FAILED: {nzero} zero-sided cells (one lane audible, the other silent)"
+        );
     }
 
     // ---- (2) GPU energy → collapse → u8, diff vs the production baseline ----

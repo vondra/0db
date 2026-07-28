@@ -24,7 +24,7 @@ use cudarc::driver::sys::CUevent_flags;
 use cudarc::driver::{result, CudaDevice, CudaFunction, CudaSlice, LaunchAsync, LaunchConfig};
 use h3o::CellIndex;
 use noise_compute::admin;
-use noise_gpu::{pack_sources, pack_tile, TileBuffers, BIN_W, N_BINS};
+use noise_gpu::{pack_sources, pack_tile, upload_obstacles, ObstDev, TileBuffers, BIN_W, N_BINS};
 use raster_reader::fused_tile_z13::{default_batch_size, TileBatch, TILE_PX};
 use raster_reader::RealRasters;
 use rayon::prelude::*;
@@ -37,6 +37,7 @@ use tile_painter::region_runner::{
 };
 use tile_painter::source_line::LineRow;
 use tile_painter::source_loader_barrier::BarrierData;
+use tile_painter::source_loader_obstacle::ObstacleData;
 use tile_painter::wire_hm3::{collapse_lden_surface_u8, read_tile, write_tile};
 
 // One-time GPU/layer setup lives in the sibling `gpu_init` module; the hot
@@ -173,6 +174,7 @@ type LayerSrc = (LineLayer, (CudaSlice<f64>, CudaSlice<f64>, CudaSlice<f32>));
 /// shared halo (`batch`, cropped in parallel across the region's blocks), the region's
 /// pre-loaded rows, and pre-uploaded sources (`src_dev`) — all built/uploaded once per
 /// centre-R4 region by the caller, not re-read or re-uploaded per block or tile.
+#[allow(clippy::too_many_arguments)]
 fn process_block(
     dev: &Arc<CudaDevice>,
     f: &CudaFunction,
@@ -184,6 +186,7 @@ fn process_block(
     region_rows: &[(LineLayer, Vec<LineRow>)],
     src_dev: &[LayerSrc],
     barriers: &BarrierData,
+    obst_dev: &ObstDev,
     stats: &mut BTreeMap<&'static str, LayerStat>,
     prog: &mut Progress,
 ) -> Result<()> {
@@ -231,10 +234,16 @@ fn process_block(
     // per-tile barrier slice rides along: reach-culled + sorted by for_tile, so
     // the kernel's early-break scans only the walls a path can actually reach.
     let prep = |it: (u32, u32, LineLayer)| -> TileBuffers {
-        let (tx, ty, _layer) = it;
+        let (tx, ty, layer) = it;
         let tile = &batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
         let tile_barriers = barriers.for_tile(&tile.bbox, cfg.halo_m);
-        pack_tile(tile, halo_geom, ETA, TW, &tile_barriers)
+        let nsrc = region_rows
+            .iter()
+            .find(|(l, _)| *l == layer)
+            .expect("layer rows")
+            .1
+            .len();
+        pack_tile(tile, halo_geom, ETA, TW, &tile_barriers, nsrc)
     };
     let prep_timed = |it: (u32, u32, LineLayer), stats: &mut BTreeMap<&'static str, LayerStat>| {
         let t = Instant::now();
@@ -250,19 +259,13 @@ fn process_block(
         let d_inner = dev.htod_copy(bufs.inner).expect("inner");
         let d_meta = dev.htod_copy(bufs.meta).expect("meta");
         // Region-resident sources (uploaded once per layer above) — not re-uploaded per tile.
+        // (nsrc rides in meta[12] — pack_tile; the freed launch slot carries the
+        // obstacle pointer table.)
         let (d_seg, d_sp, d_semis) = &src_dev
             .iter()
             .find(|(l, _)| *l == layer)
             .expect("layer src")
             .1;
-        // nsrc for this layer — the fused kernel scans [0, nsrc) and culls per block
-        // (replaces the CPU CSR bins; same count for every tile of the layer).
-        let nsrc = region_rows
-            .iter()
-            .find(|(l, _)| *l == layer)
-            .expect("layer")
-            .1
-            .len() as i32;
         let d_rxll = dev.htod_copy(bufs.rxll).expect("rxll");
         let d_rxar = dev.htod_copy(bufs.rxar).expect("rxar");
         let d_barr = dev.htod_copy(bufs.barr).expect("barr");
@@ -285,8 +288,18 @@ fn process_block(
                 .launch(
                     launch_cfg,
                     (
-                        &d_elev, &d_inner, &d_cover, &d_meta, d_seg, d_sp, d_semis, &d_rxll,
-                        &d_rxar, &d_barr, nsrc, &mut d_out,
+                        &d_elev,
+                        &d_inner,
+                        &d_cover,
+                        &d_meta,
+                        d_seg,
+                        d_sp,
+                        d_semis,
+                        &d_rxll,
+                        &d_rxar,
+                        &d_barr,
+                        &obst_dev.table,
+                        &mut d_out,
                     ),
                 )
                 .expect("launch");
@@ -454,6 +467,14 @@ fn process_region(
     } else {
         BarrierData::from_segments(Vec::new())
     };
+    // Vector obstacles (geodata-v2 1.6, QM_VECTOR_BUILDINGS=1): the same
+    // loader + policy as the CPU builder (all-or-raster, region cell required
+    // under partial, shard errors hard). Uploaded ONCE per region; the kernel
+    // reads it through a 5-slot pointer table {n, metas, starts, refs, edges}
+    // (obst[0]==0 ⇒ raster mode — one zero row keeps cuMemAlloc happy).
+    let obstacle_data = ObstacleData::load_for_r4s(&cfg.h3r4, r4, &ring)
+        .with_context(|| format!("load obstacles R4 {r4:015x}"))?;
+    let obst_dev = upload_obstacles(dev, obstacle_data.set())?;
     // Upload each layer's sources to the GPU ONCE for this region.
     let mut src_dev: Vec<LayerSrc> = Vec::with_capacity(region_rows.len());
     for (layer, rows) in &region_rows {
@@ -494,10 +515,18 @@ fn process_region(
             RASTERS.with(|slot| {
                 let mut slot = slot.borrow_mut();
                 let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
-                (
-                    (bx, by),
-                    TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters),
-                )
+                let mut batch = TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters);
+                // Vector mode: pre-bake vector reflection into rx_refl — the
+                // rxar upload then carries it to the kernel unchanged. The
+                // bake itself is the one shared helper (SPEC §3.8); only
+                // tiles this block paints are baked.
+                if let Some(set) = obstacle_data.set() {
+                    for &(tx, ty) in &blocks[&(bx, by)] {
+                        let tile = &mut batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
+                        tile_painter::source_loader_obstacle::bake_tile_vector_rx_refl(tile, set);
+                    }
+                }
+                ((bx, by), batch)
             })
         })
         .collect();
@@ -515,6 +544,7 @@ fn process_region(
             &region_rows,
             &src_dev,
             &barrier_data,
+            &obst_dev,
             stats,
             prog,
         )?;
@@ -837,7 +867,6 @@ fn run_stream(
 }
 
 fn main() -> Result<()> {
-    noise_gpu::refuse_vector_mode()?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // Index-based parse: each known flag consumes the NEXT token (which must exist
     // and not itself be a flag); everything else is a positional. Tracking by

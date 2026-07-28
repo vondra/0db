@@ -355,14 +355,19 @@ receiver (`tile-painter::surface_region`); semantics at footprint EDGES
 differ from the raster by up to one occupancy step — a deliberate,
 flag-scoped representation change, quantified in the 1.9 A/B gate. The
 POPUP still reads the raster probe in vector mode until the popup-wide
-reflection swap (plan 1.4b); GPU surface builds refuse vector mode
-entirely (`noise-gpu::refuse_vector_mode`, CUDA port = plan 1.6).
+reflection swap (plan 1.4b). The GPU line lane mirrors the CPU
+(scatter.cu obstacle-candidate DDA + `single_edge_bands_cand`; the host
+pre-bakes vector `rx_refl` before upload) with two BOUNDED deviations
+documented at the kernel: ulp-level winner ties at f64-equal δ, and vertex
+double-hits evaluated twice instead of deduped (identical bands in fp32).
+e2-full run with `QM_VECTOR_BUILDINGS=1` is the parity gate (hard-fails on
+zero-sided cells, a missing store, or a tile where no candidate fires).
 
 ### 3.9 Favourable meteorological conditions (CNOSSOS-EU §2.5.21)
-⏸ IMPLEMENTED BEHIND `FAVOURABLE_MIXING = false` (constants.rs) — output
-unchanged until the flag flips with a surface-layer OUTPUT_VER bump + world
-repaint (rollout gates: docs/dev/favourable-propagation-plan.md in
-0db-private).
+✅ LIVE — `FAVOURABLE_MIXING = true` since 2026-07-28 (eb8a432; OUTPUT_VER
+bump for the 5 surface layers in 0db-private 66b1d3ff; world repaint
+pending the combined post-geodata-v2 wave — rollout record:
+docs/dev/favourable-propagation-plan.md in 0db-private).
 
 Mechanism (2015/996 formulas (2.5.9), (2.5.24), (2.5.25)), scoped to the
 single term where favourable/homogeneous physically diverge — diffraction:

@@ -363,20 +363,11 @@ pub fn process_surface_region(
         // 1.4b) — until then flag-ON pipeline vs popup reflection may differ
         // by one 1.5 dB step at footprint edges.
         if let Some(set) = obstacle_data.set() {
-            use noise_compute::constants::ENCLOSURE_RADIUS_M;
-            use noise_compute::propagation::obstacle_index::enclosure_db;
-            use raster_reader::fused_tile_z13::TILE_PX;
             // Only the REQUESTED tiles are painted — rebaking the whole
             // batch_n² grid would triple the bake cost for nothing.
             for &(x, y) in batch_tiles {
                 let tile = &mut batch.tiles[((y - by) * ctx.batch_n + (x - bx)) as usize];
-                for py in 0..TILE_PX {
-                    let lat = tile.rx_lat[py];
-                    for px in 0..TILE_PX {
-                        tile.rx_refl_db[py * TILE_PX + px] =
-                            enclosure_db(set, lat, tile.rx_lon[px], ENCLOSURE_RADIUS_M) as f32;
-                    }
-                }
+                crate::source_loader_obstacle::bake_tile_vector_rx_refl(tile, set);
             }
         }
         stats.t_raster += t_r.elapsed();
