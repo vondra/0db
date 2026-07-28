@@ -7,10 +7,12 @@ pub(crate) fn compute_roads(
     receiver: &Receiver,
     roads: &[RoadSegment],
     barriers: &[Barrier],
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
     rasters: &dyn RasterSampler,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
     let reflection = rasters.building_enclosure(receiver.lat, receiver.lon);
+    let mut cand_scratch = Vec::new();
 
     use std::collections::HashMap;
 
@@ -159,11 +161,19 @@ pub(crate) fn compute_roads(
                 src_alt,
                 rcv_alt,
             );
+        let obstacle_input = crate::obstacle_input_for_ray(
+            obstacles,
+            &mut cand_scratch,
+            seg.cp_lat,
+            seg.cp_lon,
+            receiver.lat,
+            receiver.lon,
+        );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
                 &mut path_profile,
                 barriers,
-                propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
+                obstacle_input,
                 src_alt,
                 rcv_alt,
                 0.0, // roads: no exclusion radius
@@ -548,6 +558,7 @@ pub(crate) fn compute_roads(
         let (nearest_terrain, nearest_screening, nearest_veg) = compute_path_effects(
             rasters,
             barriers,
+            obstacles,
             acc.closest_cp_lat,
             acc.closest_cp_lon,
             acc.closest_src_height,

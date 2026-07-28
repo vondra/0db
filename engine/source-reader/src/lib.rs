@@ -13,6 +13,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod aircraft_v6;
 pub mod geo;
 pub mod hex_store;
+pub mod obstacle_store;
 pub mod query;
 #[cfg(feature = "node")]
 pub mod wire;
@@ -44,6 +45,12 @@ static STORE: std::sync::LazyLock<RwLock<HexStore>> =
 
 #[cfg(feature = "node")]
 static RASTERS: std::sync::OnceLock<raster_reader::RealRasters> = std::sync::OnceLock::new();
+/// Data root (`…/data/prepared`) captured at `source_init` — the vector
+/// obstacle loader resolves its staging tree relative to it (geodata-v2 1.4).
+static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+/// The live `…/prepared/{year}/h3r4` dir — the PROMOTED obstacle root
+/// (post-Wave-1 shards live beside each cell's arrows).
+static H3R4_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 
 // NACE codes are now baked into industrial.arrow (nace_4digit UInt16 column).
 // No global lookup needed at runtime.
@@ -159,6 +166,8 @@ pub fn source_init(h3r4_dir: String) -> napi::Result<String> {
     let rasters = raster_reader::RealRasters::new(data_dir);
     let has_dem = rasters.has_data();
     RASTERS.set(rasters).ok();
+    DATA_DIR.set(data_dir.to_path_buf()).ok();
+    H3R4_DIR.set(h3r4_path.to_path_buf()).ok();
 
     // NACE codes are baked into industrial.arrow — no global JSON needed
 
@@ -361,6 +370,17 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
     let n_roads = sources.roads.len();
     let n_railways = sources.railways.len();
 
+    // Vector obstacles (geodata-v2, QM_VECTOR_BUILDINGS=1): exact building
+    // crossings replace the raster building channel in screening. Built per
+    // query from the ring-1 obstacle shards; None keeps the raster path.
+    let obstacle_set = if noise_compute::propagation::obstacle_index::vector_buildings_enabled() {
+        DATA_DIR.get().and_then(|d| {
+            obstacle_store::load_obstacle_set(H3R4_DIR.get().map(|p| p.as_path()), d, lat, lng)
+        })
+    } else {
+        None
+    };
+
     let mut traces = noise_compute::types::TraceCollector::new();
     // M4/M5: hand the per-row baked admins to the kernels through their
     // thread-local channels (RoadSegment/RailSegment are codever-SHARED and
@@ -378,6 +398,7 @@ fn query_noise_impl(lat: f64, lng: f64, top_k_per_kind: usize) -> napi::Result<S
         &sources.buildings,
         &sources.industrial,
         &sources.barriers,
+        obstacle_set.as_ref(),
         rasters,
         &config,
         Some(&mut traces),

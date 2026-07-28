@@ -57,6 +57,9 @@ interface ScreeningObstacleTrace {
   t: number
   screen_h_m: number
   delta_m: number
+  /** Vector-store id of the dominant obstacle when screening used an exact
+   * crossing (geodata-v2, QM_VECTOR_BUILDINGS); absent on the raster path. */
+  obstacle_id?: number
   samples_taken: number
   step_m: number
   /** Number of diffraction edges in the combined terrain+building+barrier
@@ -76,6 +79,8 @@ interface ObstacleEdge {
   height_m: number
   /** Edge-top minus line-of-sight (excess above LOS). */
   screen_h_m: number
+  /** Exact-crossing obstacle id (geodata-v2); absent on the raster path. */
+  obstacle_id?: number
 }
 
 export interface EdgePoint {

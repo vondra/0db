@@ -262,6 +262,7 @@ pub fn screening_attenuation_with_meta(
         step_m: step_m_med,
         n_edges: 0,
         edges: Vec::new(),
+        obstacle_id: None,
     };
 
     if n < 3 || dist_m < 30.0 {
@@ -439,7 +440,9 @@ pub fn screening_attenuation_with_meta(
                 t: cand.t,
                 height_m: cand.height_m as f64,
                 screen_h_m: top - los_edge,
+                obstacle_id: Some(cand.id),
             }],
+            obstacle_id: Some(cand.id),
         };
         return (atten_screen, trace);
     }
@@ -503,7 +506,9 @@ pub fn screening_attenuation_with_meta(
             t: t[idx],
             height_m,
             screen_h_m: screen_h,
+            obstacle_id: None,
         }],
+        obstacle_id: None,
     };
 
     (atten_screen, trace)

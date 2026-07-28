@@ -30,6 +30,7 @@ use constants::*;
 use emission::road::{self};
 use propagation::geo;
 use propagation::iso9613::{self, SourceGeometry};
+use propagation::obstacle_index::ObstacleSet;
 use traces::{
     build_point_segment_trace, build_rail_segment_trace, build_road_segment_trace, BuildPointTrace,
     BuildRailTrace, BuildRoadTrace,
@@ -119,11 +120,13 @@ pub fn compute_at_point(
     buildings: &[PointSource],
     industrial: &[PointSource],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
 ) -> NoiseResult {
     compute_at_point_inner(
-        receiver, roads, railways, buildings, industrial, barriers, rasters, config, None,
+        receiver, roads, railways, buildings, industrial, barriers, obstacles, rasters, config,
+        None,
     )
 }
 
@@ -137,12 +140,14 @@ pub fn compute_at_point_with_traces(
     buildings: &[PointSource],
     industrial: &[PointSource],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     rasters: &dyn RasterSampler,
     config: &ComputeConfig,
     traces: Option<&mut TraceCollector>,
 ) -> NoiseResult {
     compute_at_point_inner(
-        receiver, roads, railways, buildings, industrial, barriers, rasters, config, traces,
+        receiver, roads, railways, buildings, industrial, barriers, obstacles, rasters, config,
+        traces,
     )
 }
 
@@ -154,6 +159,7 @@ fn compute_at_point_inner(
     buildings: &[PointSource],
     industrial: &[PointSource],
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     rasters: &dyn RasterSampler,
     _config: &ComputeConfig,
     mut traces: Option<&mut TraceCollector>,
@@ -179,8 +185,14 @@ fn compute_at_point_inner(
 
     if !roads.is_empty() {
         let t = std::time::Instant::now();
-        let (road_periods, road_contributors) =
-            compute_roads(receiver, roads, barriers, rasters, traces.as_deref_mut());
+        let (road_periods, road_contributors) = compute_roads(
+            receiver,
+            roads,
+            barriers,
+            obstacles,
+            rasters,
+            traces.as_deref_mut(),
+        );
         timings.road_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Road,
@@ -194,8 +206,14 @@ fn compute_at_point_inner(
 
     if !railways.is_empty() {
         let t = std::time::Instant::now();
-        let (rail_periods, rail_contributors) =
-            compute_railways(receiver, railways, barriers, rasters, traces.as_deref_mut());
+        let (rail_periods, rail_contributors) = compute_railways(
+            receiver,
+            railways,
+            barriers,
+            obstacles,
+            rasters,
+            traces.as_deref_mut(),
+        );
         timings.rail_ms = t.elapsed().as_secs_f64() * 1000.0;
         source_results.push(SourceResult {
             source_type: LayerKind::Railway,
@@ -213,6 +231,7 @@ fn compute_at_point_inner(
             receiver,
             buildings,
             barriers,
+            obstacles,
             rasters,
             LayerKind::Building,
             traces.as_deref_mut(),
@@ -234,6 +253,7 @@ fn compute_at_point_inner(
             receiver,
             industrial,
             barriers,
+            obstacles,
             rasters,
             LayerKind::Industrial,
             traces,
@@ -317,7 +337,7 @@ pub fn road_periods(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
 ) -> NoisePeriods {
-    compute_roads(receiver, roads, barriers, rasters, None).0
+    compute_roads(receiver, roads, barriers, None, rasters, None).0
 }
 
 /// Railway [`NoisePeriods`] at a receiver — the popup rail path without trace
@@ -331,7 +351,7 @@ pub fn rail_periods(
     barriers: &[Barrier],
     rasters: &dyn RasterSampler,
 ) -> NoisePeriods {
-    compute_railways(receiver, railways, barriers, rasters, None).0
+    compute_railways(receiver, railways, barriers, None, rasters, None).0
 }
 
 /// Industrial [`NoisePeriods`] at a receiver — the popup point-source path
@@ -349,6 +369,7 @@ pub fn industrial_periods(
         receiver,
         sources,
         barriers,
+        None,
         rasters,
         LayerKind::Industrial,
         None,
@@ -371,6 +392,7 @@ pub fn building_periods(
         receiver,
         sources,
         barriers,
+        None,
         rasters,
         LayerKind::Building,
         None,
@@ -383,6 +405,7 @@ pub fn building_periods(
 pub fn compute_path_effects(
     rasters: &dyn RasterSampler,
     barriers: &[Barrier],
+    obstacles: Option<&ObstacleSet>,
     src_lat: f64,
     src_lon: f64,
     src_height: f64,
@@ -391,6 +414,7 @@ pub fn compute_path_effects(
     exclusion_radius_m: f64,
 ) -> (TerrainBreakdown, ScreeningBreakdown, VegetationBreakdown) {
     let rcv_alt = receiver.altitude_m();
+    let mut cand_scratch = Vec::new();
 
     // Unified path profile — one sampling, all four rasters + all metadata.
     let mut path_profile = propagation::PathProfile::new();
@@ -413,11 +437,19 @@ pub fn compute_path_effects(
             rcv_alt,
         );
 
+    let obstacle_input = obstacle_input_for_ray(
+        obstacles,
+        &mut cand_scratch,
+        src_lat,
+        src_lon,
+        receiver.lat,
+        receiver.lon,
+    );
     let (_screening_atten, obstacle_trace) =
         propagation::path_effects::screening_attenuation_with_meta(
             &mut path_profile,
             barriers,
-            propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
+            obstacle_input,
             src_height,
             rcv_alt,
             exclusion_radius_m,
@@ -449,6 +481,29 @@ pub fn compute_path_effects(
             sampled_path_m: (sampled_path_m * 10.0).round() / 10.0,
         },
     )
+}
+
+/// Exact vector-obstacle crossings for one source→receiver ray, as an
+/// [`path_effects::ObstacleInput`]. With no index (raster mode) this is
+/// `CANDIDATES_OFF` — byte-identical legacy behavior.
+fn obstacle_input_for_ray<'a>(
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
+    scratch: &'a mut Vec<crate::propagation::obstacle_index::CrossingCandidate>,
+    src_lat: f64,
+    src_lon: f64,
+    rcv_lat: f64,
+    rcv_lon: f64,
+) -> propagation::path_effects::ObstacleInput<'a> {
+    match obstacles {
+        Some(idx) => {
+            idx.crossings(src_lat, src_lon, rcv_lat, rcv_lon, scratch);
+            propagation::path_effects::ObstacleInput {
+                candidates: scratch,
+                replace_sample_buildings: true,
+            }
+        }
+        None => propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
+    }
 }
 
 #[cfg(test)]
@@ -515,6 +570,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -617,6 +673,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -637,6 +694,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -647,6 +705,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -708,6 +767,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &ComputeConfig::default(),
         );
@@ -919,6 +979,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             &MockRasters,
             &config,
         );

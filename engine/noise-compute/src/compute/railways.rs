@@ -19,9 +19,11 @@ pub(crate) fn compute_railways(
     receiver: &Receiver,
     railways: &[RailSegment],
     barriers: &[Barrier],
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
     rasters: &dyn RasterSampler,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
+    let mut cand_scratch = Vec::new();
     use emission::railway::{self, RailType};
     use std::collections::HashMap;
 
@@ -219,11 +221,19 @@ pub(crate) fn compute_railways(
                 src_alt,
                 rcv_alt,
             );
+        let obstacle_input = crate::obstacle_input_for_ray(
+            obstacles,
+            &mut cand_scratch,
+            seg.cp_lat,
+            seg.cp_lon,
+            receiver.lat,
+            receiver.lon,
+        );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
                 &mut path_profile,
                 barriers,
-                propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
+                obstacle_input,
                 src_alt,
                 rcv_alt,
                 0.0, // railways: no exclusion radius
@@ -511,6 +521,7 @@ pub(crate) fn compute_railways(
         let rail_effects = compute_path_effects(
             rasters,
             barriers,
+            obstacles,
             acc.cp_lat,
             acc.cp_lon,
             acc.src_height,

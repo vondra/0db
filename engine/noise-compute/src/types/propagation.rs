@@ -149,6 +149,12 @@ pub struct ObstacleEdge {
     pub t: f64,             // fractional position along path (0..1)
     pub height_m: f64,      // building or barrier height above ground; 0.0 for "terrain"
     pub screen_h_m: f64,    // edge-top minus line-of-sight (excess above LOS)
+    /// QUERY-LOCAL ordinal of the crossing's obstacle (geodata-v2) —
+    /// deterministic for one on-disk state (sorted shard iteration) but NOT
+    /// a store identity; do not join on it. `None` for raster-sample edges;
+    /// omitted from JSON when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obstacle_id: Option<u32>,
 }
 
 /// Screening obstacle trace — the dominant obstacle (by LOS excess) that the
@@ -172,6 +178,11 @@ pub struct ScreeningObstacleTrace {
     /// (smallest `t`); the dominant edge by LOS excess is whichever has the
     /// largest `screen_h_m` — UI should not assume `edges[0]` is dominant.
     pub edges: Vec<ObstacleEdge>,
+    /// Query-local ordinal of the DOMINANT obstacle when it was an exact
+    /// crossing (geodata-v2) — debug tag, not a store identity. Omitted from
+    /// JSON when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obstacle_id: Option<u32>,
 }
 
 /// Building screening metadata. The A-weighted impact scalar lives on

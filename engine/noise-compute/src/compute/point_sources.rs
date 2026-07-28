@@ -8,10 +8,12 @@ pub(crate) fn compute_point_sources(
     receiver: &Receiver,
     sources: &[PointSource],
     barriers: &[Barrier],
+    obstacles: Option<&crate::propagation::obstacle_index::ObstacleSet>,
     rasters: &dyn RasterSampler,
     source_kind: LayerKind,
     mut traces: Option<&mut TraceCollector>,
 ) -> (NoisePeriods, Vec<Contributor>) {
+    let mut cand_scratch = Vec::new();
     use std::collections::HashMap;
 
     struct PtAccum {
@@ -81,11 +83,19 @@ pub(crate) fn compute_point_sources(
                 src_alt,
                 rcv_alt,
             );
+        let obstacle_input = crate::obstacle_input_for_ray(
+            obstacles,
+            &mut cand_scratch,
+            src.lat,
+            src.lon,
+            receiver.lat,
+            receiver.lon,
+        );
         let (screening_atten, obstacle_trace) =
             propagation::path_effects::screening_attenuation_with_meta(
                 &mut path_profile,
                 barriers,
-                propagation::path_effects::ObstacleInput::CANDIDATES_OFF,
+                obstacle_input,
                 src_alt,
                 rcv_alt,
                 src.exclusion_radius_m as f64,
@@ -232,6 +242,7 @@ pub(crate) fn compute_point_sources(
         let pt_effects = compute_path_effects(
             rasters,
             barriers,
+            obstacles,
             acc.lat,
             acc.lon,
             acc.src_height,

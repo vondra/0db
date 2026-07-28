@@ -189,6 +189,7 @@ pub(super) fn compute_single_edge_at(
     let delta_star = (d_sd + d_dr - d_sr).max(0.0);
     let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
 
+    let gamma = FAV_RAY_CURVATURE_MIN_M.max(FAV_RAY_CURVATURE_PER_DSR * dsr);
     DiffractionResult {
         delta: d_sb + d_br - dsr,
         delta_fav: curved_path_difference(d_sb, d_br, dsr, gamma),

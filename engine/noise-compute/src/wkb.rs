@@ -273,6 +273,13 @@ pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
                 .and_then(|s| u8::from_str_radix(s, 16).ok())
         })
         .collect();
+    parse_wkb_polygons_bytes(&bytes)
+}
+
+/// [`parse_wkb_polygons`] over raw WKB bytes — the obstacle store carries WKB
+/// unencoded (Overture parquet passthrough), so the vector-obstacle loaders
+/// skip the hex round-trip.
+pub(crate) fn parse_wkb_polygons_bytes(bytes: &[u8]) -> Vec<WkbPoly> {
     if bytes.len() < 9 {
         return Vec::new();
     }
@@ -302,7 +309,7 @@ pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
     };
 
     match read_u32(1) {
-        3 => parse_one_polygon(&bytes, 5, &read_u32, &read_f64)
+        3 => parse_one_polygon(bytes, 5, &read_u32, &read_f64)
             .map(|(poly, _)| vec![poly])
             .unwrap_or_default(),
         6 => {
@@ -311,11 +318,18 @@ pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
             let mut off = 9;
             for _ in 0..num_polys {
                 // Each sub-polygon: byte-order(1) + type(4), then its rings.
+                // Mixed-endian children are legal WKB but unseen in our
+                // sources (Overture/OSM emit uniform LE); the shared read
+                // closures are bound to the OUTER order, so bail on the
+                // whole geometry rather than misparse (gg review).
                 if off + 5 > bytes.len() {
                     break;
                 }
+                if (bytes[off] == 1) != le {
+                    return polys; // mixed-endian child — refuse the remainder
+                }
                 off += 5;
-                match parse_one_polygon(&bytes, off, &read_u32, &read_f64) {
+                match parse_one_polygon(bytes, off, &read_u32, &read_f64) {
                     Some((poly, new_off)) => {
                         polys.push(poly);
                         off = new_off;

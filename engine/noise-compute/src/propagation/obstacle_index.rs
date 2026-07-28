@@ -210,6 +210,39 @@ impl ObstacleIndex {
     }
 }
 
+/// A query-scoped set of per-cell [`ObstacleIndex`]es (Arc-shared from a
+/// process cache). The ingest's half-open centroid ownership guarantees a
+/// footprint lives in exactly ONE cell index, so per-index results concat
+/// without cross-index dedupe; one final sort restores chainage order.
+pub struct ObstacleSet {
+    pub indexes: Vec<std::sync::Arc<ObstacleIndex>>,
+}
+
+impl ObstacleSet {
+    /// Total indexed edges across the set (telemetry / emptiness check).
+    pub fn edge_count(&self) -> usize {
+        self.indexes.iter().map(|i| i.edge_count()).sum()
+    }
+
+    /// Exact crossings of the ray across every cell index, t-sorted.
+    pub fn crossings(
+        &self,
+        src_lat: f64,
+        src_lon: f64,
+        rcv_lat: f64,
+        rcv_lon: f64,
+        out: &mut Vec<CrossingCandidate>,
+    ) {
+        out.clear();
+        let mut scratch = Vec::new();
+        for idx in &self.indexes {
+            idx.crossings(src_lat, src_lon, rcv_lat, rcv_lon, &mut scratch);
+            out.extend_from_slice(&scratch);
+        }
+        out.sort_unstable_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+    }
+}
+
 /// Read `QM_VECTOR_BUILDINGS` once per process. Loaders (tile-painter,
 /// source-reader) call this at init and thread the bool — kernels never read
 /// the environment. OFF is the production default until the Wave-1 cutover.
@@ -299,6 +332,19 @@ impl Builder {
                 kind,
                 id,
             });
+        }
+    }
+
+    /// Add every ring of a raw-WKB Polygon/MultiPolygon footprint (outer
+    /// rings AND holes — a courtyard wall is a wall). Invalid or non-areal
+    /// WKB adds nothing. This is the obstacle-store ingestion entry: the
+    /// per-cell arrows carry Overture WKB bytes unencoded.
+    pub fn add_polygon_wkb(&mut self, wkb: &[u8], height_m: f32, kind: ObstacleKind, id: u32) {
+        for (outer, holes) in crate::wkb::parse_wkb_polygons_bytes(wkb) {
+            self.add_ring(&outer, height_m, kind, id);
+            for hole in &holes {
+                self.add_ring(hole, height_m, kind, id);
+            }
         }
     }
 

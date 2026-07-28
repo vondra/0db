@@ -304,6 +304,18 @@ DEM, Overture building height, WorldCover forest cover and IMD imperviousness ar
 
 Diffraction is computed once over a composite top profile (`elevation + max(building_h, barrier_h)`), avoiding the terrain+screening double-count that would otherwise occur when a building sits on a hill. The δ* OLS mean-ground fit stays on bare-earth elevation. Implementation + caller API split (`terrain_attenuation` vs `screening_attenuation`): `propagation::path_effects::screening_attenuation_with_meta`. Ground G and vegetation depth are path integrals weighted by interval length so non-uniform bilateral spacing doesn't bias endpoints.
 
+
+**Vector obstacle candidates (geodata-v2, behind `QM_VECTOR_BUILDINGS`, OFF in
+production):** when enabled, building screening stops reading the 30 m raster
+channel. Exact footprint crossings from the per-cell obstacle store
+(`ObstacleIndex`, ray×edge intersections) compete with the cadence composite
+edge on δ; the winning candidate is evaluated by `compute_single_edge_at`
+(explicit edge point; the §2.5.6(c) mean-ground fits include the bare-ground
+point D on BOTH sides, so a candidate at a sample's t reproduces the raster
+result bit-for-bit). Candidates never enter the cadence sample arrays —
+ground/vegetation integrals and the GPU sample envelope are untouched.
+Barriers keep the sampled midpoint path until plan step 1.7.
+
 ### 3.6 Building screening (ISO 9613-2, per-band)
 Samples Overture Maps 30m building raster at the same bilateral cadence (§3.5a). Explicit `noise_barrier` geometries compete with raster buildings. For industrial sources, screening samples inside the source's own footprint are skipped via an exclusion radius.
 
