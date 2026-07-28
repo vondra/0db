@@ -27,6 +27,15 @@ __constant__ double LDEN_W[3]     = {12.0, 12.649110640673518, 80.0};  // 4·√
 #define UB_SAFETY 1.0001         // inflate UB past fast_exp non-monotonicity
 #define SOS 340.0                // SPEED_OF_SOUND
 #define SINGLE_DIFF_CAP 20.0     // ISO 9613-2 §7.3 single-edge cap
+// CNOSSOS favourable/homogeneous mixing — compile-time mirrors of constants.rs
+// (P_FAV, FAVOURABLE_MIXING, FAV_RAY_CURVATURE_*). Flip FAVOURABLE_MIXING to 1
+// IN THE SAME commit as the CPU const + rebuild the PTX + re-run e2-full
+// CPU≡GPU parity (the plan's G6 gate) — a one-sided flip silently forks the
+// physics between lanes.
+#define P_FAV 0.5
+#define FAVOURABLE_MIXING 0
+#define FAV_GAMMA_MIN 1000.0
+#define FAV_GAMMA_PER_DSR 8.0
 #define CELL_M (110540.0/3600.0) // mirror of path_profile::CELL_M (M_PER_DEG_LAT/3600)
 #define NEAR_OFFSET_M 10.0       // near-endpoint probe
 #define MAXT 80                  // per-thread profile capacity (fill_t ≤~58 @10km)
@@ -334,7 +343,28 @@ __device__ void single_edge_bands(const double* t, const double* top, const doub
     float dzsb = (float)(top[idx] - se), dzbr = (float)(top[idx] - re), dzsr = (float)(re - se);
     float dsb = sqrtf(dsg * dsg + dzsb * dzsb), dbr = sqrtf(drg * drg + dzbr * dzbr);
     float delta = dzsb * dzsb / (dsb + dsg) + dzbr * dzbr / (dbr + drg) - dzsr * dzsr / (float)(dsr + dist);
-    maek_single(delta, (float)dstar(t, bare, n, idx, dist, src_h, rcv_h), out);
+    float dstar_v = (float)dstar(t, bare, n, idx, dist, src_h, rcv_h);
+    maek_single(delta, dstar_v, out);
+    if (FAVOURABLE_MIXING) {
+        // diffraction.rs::curved_path_difference + mix_fav_hom mirror
+        // ((2.5.24)/(2.5.25)/(2.5.9)). Chords + arc difference in f64: the
+        // near-equal-kilometres cancellation loses ~4 digits — fatal in fp32
+        // (the mdidx lesson), comfortable in f64. Mix itself is dB-scale fp32.
+        double dsg_d = t[idx] * dist, drg_d = dist - dsg_d;
+        double dzsb_d = top[idx] - se, dzbr_d = top[idx] - re;
+        double dsb_d = sqrt(dsg_d * dsg_d + dzsb_d * dzsb_d);
+        double dbr_d = sqrt(drg_d * drg_d + dzbr_d * dzbr_d);
+        double gamma = fmax(FAV_GAMMA_MIN, FAV_GAMMA_PER_DSR * dsr);
+        double delta_f = 2.0 * gamma * (asin(dsb_d / (2.0 * gamma))
+            + asin(dbr_d / (2.0 * gamma)) - asin(dsr / (2.0 * gamma)));
+        float fav[NB];
+        maek_single((float)delta_f, dstar_v, fav);
+        for (int i = 0; i < NB; i++) {
+            float e = (float)P_FAV * exp10f(-fav[i] * 0.1f)
+                + (1.0f - (float)P_FAV) * exp10f(-out[i] * 0.1f);
+            out[i] = -10.0f * log10f(e);
+        }
+    }
 }
 
 // ---- path_effects::terrain_attenuation — bare-earth diffraction. Guard (short
