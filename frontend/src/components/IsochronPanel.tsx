@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Radar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { CheckChip } from '@/components/ui/check-chip'
 
 interface IsochronRequest {
   lat: number
@@ -14,16 +15,6 @@ interface IsochronPanelProps {
   onGo: (request: IsochronRequest) => void
   active: boolean
 }
-
-// Mode-toggle look: a visible foreground-tint fill when on, ghosted + muted when
-// off, with a clear hover both ways. The theme is grayscale (the `secondary`
-// token is ~white, so secondary-vs-outline was nearly invisible), so "on" uses a
-// foreground tint that reads against the panel yet stays distinct from the dark
-// Show-area CTA.
-const toggleClass = (on: boolean) =>
-  on
-    ? 'bg-foreground/20 text-foreground hover:bg-foreground/30'
-    : 'text-muted-foreground line-through hover:bg-foreground/10 hover:text-foreground'
 
 export default function IsochronPanel({ location, onGo, active }: IsochronPanelProps) {
   const [walk, setWalk] = useState(true)
@@ -60,8 +51,8 @@ export default function IsochronPanel({ location, onGo, active }: IsochronPanelP
         <span className="text-muted-foreground">min</span>
         {/* Group modes + action so they wrap together (right-aligned) on narrow screens. */}
         <div className="flex items-center gap-2 ml-auto">
-          <Button type="button" variant="ghost" size="xs" onClick={() => setWalk(!walk)} className={toggleClass(walk)}>Walk</Button>
-          <Button type="button" variant="ghost" size="xs" onClick={() => setCar(!car)} className={toggleClass(car)}>Car</Button>
+          <CheckChip checked={walk} label="Walk" onToggle={() => setWalk(!walk)} testId="isochron-walk" />
+          <CheckChip checked={car} label="Car" onToggle={() => setCar(!car)} testId="isochron-car" />
           <Button variant="default" size="xs" onClick={handleGo} disabled={!location || (!walk && !car)}><Radar />Show area</Button>
         </div>
       </div>

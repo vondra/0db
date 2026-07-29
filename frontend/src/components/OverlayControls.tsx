@@ -4,6 +4,7 @@ import type { RealEstateFilters } from './RealEstateLayer'
 import type { StayFilters } from './StayLayer'
 import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX, QUIET_THRESHOLD_STEP } from '../hooks/useUrlState'
 import { Switch } from './ui/switch'
+import { CheckChip } from './ui/check-chip'
 
 interface OverlayControlsProps {
   quietClustersEnabled: boolean
@@ -15,13 +16,6 @@ interface OverlayControlsProps {
   stayFilters: StayFilters
   onStayChange: (filters: StayFilters) => void
 }
-
-// Booking.com's own labels for the two accommodation families.
-const STAY_TYPES = [
-  { value: 'all', label: 'All' },
-  { value: 'hotel', label: 'Hotels' },
-  { value: 'rental', label: 'Apartments' },
-] as const
 
 function ToggleRow({ active, icon, label, tooltip, onClick }: {
   active: boolean; icon: React.ReactNode; label: string; tooltip: string; onClick: () => void
@@ -88,21 +82,22 @@ export default function OverlayControls({
         onClick={() => onStayChange({ ...stayFilters, enabled: !stayFilters.enabled })}
       />
       {stayFilters.enabled && (
-        <div className="flex gap-1 ml-7 mt-0.5 mb-1">
-          {STAY_TYPES.map(({ value, label }) => (
-            <button
-              key={value}
-              data-testid={`stay-type-${value}`}
-              onClick={() => onStayChange({ ...stayFilters, stayType: value })}
-              className={`px-2 py-0.5 rounded-full text-[11px] cursor-pointer transition-colors ${
-                stayFilters.stayType === value
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-muted-foreground hover:bg-black/10'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        // Booking.com's own labels for the two accommodation families; both
+        // on by default, each independently toggleable (owner 2026-07-29 —
+        // no "All" pseudo-option).
+        <div className="flex gap-1.5 ml-7 mt-0.5 mb-1">
+          <CheckChip
+            checked={stayFilters.hotels}
+            label="Hotels"
+            onToggle={() => onStayChange({ ...stayFilters, hotels: !stayFilters.hotels })}
+            testId="stay-hotels"
+          />
+          <CheckChip
+            checked={stayFilters.rentals}
+            label="Apartments"
+            onToggle={() => onStayChange({ ...stayFilters, rentals: !stayFilters.rentals })}
+            testId="stay-rentals"
+          />
         </div>
       )}
 

@@ -56,7 +56,7 @@ interface SlimStay {
 }
 interface StayPayload {
   listings: SlimStay[]
-  meta: { checkin: string; checkout: string; nights: number; currency: string; stale?: boolean }
+  meta: { checkin: string; checkout: string; nights: number; currency: string; stale?: boolean; partial?: boolean }
 }
 
 const cache = new Map<string, { at: number; payload: StayPayload }>()
@@ -74,6 +74,11 @@ function takeToken(): boolean {
   if (upstreamCalls.length >= UPSTREAM_PER_MIN) return false
   upstreamCalls.push(now)
   return true
+}
+
+/** Test-only: multi-page scenarios would otherwise exhaust the real window. */
+export function resetUpstreamWindowForTests(): void {
+  upstreamCalls.length = 0
 }
 
 // A stable near-future stay (4 weeks out, 2 nights) so prices are real and
@@ -172,9 +177,11 @@ export async function stayRoutes(app: FastifyInstance): Promise<void> {
     const key = `${bbox.swlat},${bbox.swlng},${bbox.nelat},${bbox.nelng}|${type ?? 'all'}|${dates.checkin}`
 
     // Success responses only — an explicit max-age on a 429/502 would let
-    // shared caches (Cloudflare) pin the error for 5 minutes.
+    // shared caches (Cloudflare) pin the error for 5 minutes. A partial
+    // (window-truncated) set must not be pinned by ANY cache: the client
+    // retries it on the next moveend.
     const sendOk = (payload: StayPayload) =>
-      reply.header('Cache-Control', 'public, max-age=300').send(payload)
+      reply.header('Cache-Control', payload.meta.partial ? 'no-store' : 'public, max-age=300').send(payload)
 
     const hit = cache.get(key)
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) return sendOk(hit.payload)
@@ -201,45 +208,83 @@ export async function stayRoutes(app: FastifyInstance): Promise<void> {
       })
       const spanLat = parseFloat(bbox.nelat) - parseFloat(bbox.swlat)
       const spanLng = parseFloat(bbox.nelng) - parseFloat(bbox.swlng)
-      if (spanLat > FLAT_SPAN_DEG || spanLng > FLAT_SPAN_DEG) {
-        // One best-rated stay per H3 cell, spread across the viewport — a
-        // flat list at these spans clusters wherever the city is densest and
-        // leaves the rest of the screen empty. At city-block spans (flat
-        // mode) density is the point, so no clustering there.
-        params.set('cluster', 'top')
-        params.set('precision', String(pickPrecision(parseFloat(bbox.swlat), parseFloat(bbox.swlng), parseFloat(bbox.nelat), parseFloat(bbox.nelng))))
-      }
+      // Street spans try the complete flat list first; anything wider goes
+      // straight to one-best-per-H3-cell — a flat list there truncates to
+      // Stay22's own ranking, which clusters wherever the city is densest
+      // and leaves the rest of the screen empty.
+      const flatEligible = spanLat <= FLAT_SPAN_DEG && spanLng <= FLAT_SPAN_DEG
+      const precision = String(pickPrecision(parseFloat(bbox.swlat), parseFloat(bbox.swlng), parseFloat(bbox.nelat), parseFloat(bbox.nelng)))
       if (type) params.set('type', type)
 
       pending = (async () => {
-        const results: any[] = []
-        let complete = true
-        for (let page = 1; page <= PAGES_MAX; page++) {
-          // Page 2+ costs its own upstream slot; when the window is spent,
-          // a partial page-1 result beats waiting.
-          if (page > 1 && !takeToken()) { complete = false; break }
-          params.set('page', String(page))
-          const res = await fetch(`${STAY22_URL}?${params}`, {
-            signal: AbortSignal.timeout(12_000),
-            headers: API_KEY ? { 'X-API-KEY': API_KEY } : undefined,
-          })
-          if (!res.ok) throw new Error(`stay22 ${res.status}`)
-          const data: any = await res.json()
-          const batch = ((data?.results ?? []) as any[]).slice(0, PAGE_SIZE)
-          results.push(...batch)
-          const total = num(data?.meta?.total)
-          if (batch.length < PAGE_SIZE || (total != null && results.length >= total)) break
+        const BUDGET = PAGE_SIZE * PAGES_MAX
+        // Page through one mode. The caller prepaid the first call's window
+        // slot; every further call (page 2+, or a mode refetch) pays its own —
+        // when the window is spent, a partial set beats waiting. A flat pass
+        // aborts the moment page 1 reveals total > BUDGET: paging on would
+        // burn the window the clustered refetch needs for ITS pages.
+        const fetchSet = async (clustered: boolean, prepaid: boolean) => {
+          const p = new URLSearchParams(params)
+          if (clustered) {
+            p.set('cluster', 'top')
+            p.set('precision', precision)
+          }
+          const results: any[] = []
+          let tokenStarved = false
+          let aborted = false
+          let total: number | null = null
+          for (let page = 1; page <= PAGES_MAX; page++) {
+            if (!(page === 1 && prepaid) && !takeToken()) { tokenStarved = true; break }
+            p.set('page', String(page))
+            const res = await fetch(`${STAY22_URL}?${p}`, {
+              signal: AbortSignal.timeout(12_000),
+              headers: API_KEY ? { 'X-API-KEY': API_KEY } : undefined,
+            })
+            if (!res.ok) throw new Error(`stay22 ${res.status}`)
+            const data: any = await res.json()
+            const batch = ((data?.results ?? []) as any[]).slice(0, PAGE_SIZE)
+            results.push(...batch)
+            total = num(data?.meta?.total)
+            if (!clustered && total != null && total > BUDGET) { aborted = true; break }
+            if (batch.length < PAGE_SIZE || (total != null && results.length >= total)) break
+          }
+          return { results, tokenStarved, aborted, total }
         }
+
+        let set = await fetchSet(!flatEligible, true)
+        let cacheable = !set.tokenStarved
+        // A dense street box can exceed even the flat page budget — the cut
+        // is then Stay22's spatially clustered ranking (owner 2026-07-29:
+        // pins piled in one corner). Uniform per-cell sampling beats a
+        // biased-but-larger list, so refetch clustered. With no meta.total,
+        // a budget's worth of full batches is treated as truncation too.
+        const truncated = set.aborted || (set.total != null
+          ? set.total > set.results.length
+          : set.results.length >= BUDGET)
+        if (flatEligible && !set.tokenStarved && truncated) {
+          const uniform = await fetchSet(true, false)
+          if (uniform.results.length > 0 && !uniform.tokenStarved) {
+            set = uniform
+          } else {
+            // The biased flat cut must not become the bucket's cached truth.
+            cacheable = false
+            if (uniform.results.length > 0) set = uniform
+          }
+        }
+
         const byId = new Map<string, SlimStay>()
-        for (const r of results) {
+        for (const r of set.results) {
           const s = slim(r, dates.nights)
           if (s && !byId.has(s.id)) byId.set(s.id, s)
         }
-        const payload: StayPayload = { listings: [...byId.values()], meta: { ...dates, currency: 'EUR' } }
-        // A window-truncated page set must not become the bucket's truth for
-        // a whole TTL (nor evict a complete stale entry) — serve it once and
-        // let the next request retry the missing pages.
-        if (complete) {
+        const payload: StayPayload = {
+          listings: [...byId.values()],
+          meta: { ...dates, currency: 'EUR', ...(cacheable ? {} : { partial: true }) },
+        }
+        // A window-truncated or bias-suspect page set must not become the
+        // bucket's truth for a whole TTL (nor evict a complete stale entry) —
+        // serve it once and let the next request retry.
+        if (cacheable) {
           cache.delete(key) // re-insert so a refreshed bucket is newest for eviction
           cache.set(key, { at: Date.now(), payload })
           while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!)

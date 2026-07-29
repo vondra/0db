@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test, { mock } from 'node:test'
 import Fastify from 'fastify'
-import { stayRoutes, snap, pickPrecision, slim } from './stay.js'
+import { stayRoutes, snap, pickPrecision, slim, resetUpstreamWindowForTests } from './stay.js'
 
 test('snap keeps grid-boundary values in place', () => {
   // Regression: floor(50.05/0.05) is 1000.999… without the epsilon, snapping
@@ -98,12 +98,14 @@ test('GET /api/stay validates the bbox before any upstream call', async (t) => {
   assert.equal(fetchMock.mock.callCount(), 0)
 })
 
+const mk = (i: number) => ({
+  ...SAMPLE,
+  id: `h${i}`,
+  location: { coordinates: { lat: 48.21 + i * 1e-4, lng: 17.21 } },
+})
+
 test('GET /api/stay pages through a dense flat-mode bucket', async (t) => {
-  const mk = (i: number) => ({
-    ...SAMPLE,
-    id: `h${i}`,
-    location: { coordinates: { lat: 48.21 + i * 1e-4, lng: 17.21 } },
-  })
+  resetUpstreamWindowForTests()
   const pages = [
     { results: Array.from({ length: 100 }, (_, i) => mk(i)), meta: { total: 150 } },
     { results: Array.from({ length: 50 }, (_, i) => mk(100 + i)), meta: { total: 150 } },
@@ -128,7 +130,35 @@ test('GET /api/stay pages through a dense flat-mode bucket', async (t) => {
   assert.ok(urls[1].includes('page=2'))
 })
 
+test('GET /api/stay falls back to uniform sampling when flat mode truncates', async (t) => {
+  resetUpstreamWindowForTests()
+  // Page 1 reveals total=400 > the 300 budget → flat paging must stop
+  // immediately (paging on would burn the window the clustered refetch
+  // needs) and the biased flat cut is replaced by cluster=top sampling.
+  const flatPage = { results: Array.from({ length: 100 }, (_, i) => mk(i)), meta: { total: 400 } }
+  const clusterSet = { results: Array.from({ length: 80 }, (_, i) => mk(1000 + i)), meta: { total: 80 } }
+  const urls: string[] = []
+  const fetchMock = mock.method(globalThis, 'fetch', async (url: any) => {
+    urls.push(String(url))
+    return new Response(JSON.stringify(urls.length <= 1 ? flatPage : clusterSet), { status: 200 })
+  })
+  t.after(() => fetchMock.mock.restore())
+
+  const app = Fastify()
+  await app.register(stayRoutes)
+  t.after(async () => app.close())
+
+  const response = await app.inject('/api/stay?swlat=48.30&swlng=17.30&nelat=48.32&nelng=17.32')
+  assert.equal(response.statusCode, 200)
+  assert.equal(urls.length, 2, 'flat aborts after page 1, one clustered set')
+  assert.ok(!urls[0].includes('cluster='), 'starts flat')
+  assert.ok(urls[1].includes('cluster=top'), 'refetches clustered')
+  assert.equal(response.json().listings.length, 80)
+  assert.equal(response.headers['cache-control'], 'public, max-age=300')
+})
+
 test('GET /api/stay serves the second hit from cache', async (t) => {
+  resetUpstreamWindowForTests()
   const upstream = { results: [SAMPLE] }
   const fetchMock = mock.method(globalThis, 'fetch', async () =>
     new Response(JSON.stringify(upstream), { status: 200 }))

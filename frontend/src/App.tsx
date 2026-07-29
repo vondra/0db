@@ -16,6 +16,15 @@ import { useUrlState, EMPTY_RASTER_OVERLAYS, QUIET_THRESHOLD_DEFAULT } from './h
 import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { StayFilters, Stay } from './components/StayLayer'
+
+/** StayFilters → the `stay` URL token (null = layer off, omitted from the hash). */
+function stayParam(f: StayFilters): 'all' | 'hotel' | 'rental' | 'none' | null {
+  if (!f.enabled) return null
+  if (f.hotels && f.rentals) return 'all'
+  if (f.hotels) return 'hotel'
+  if (f.rentals) return 'rental'
+  return 'none'
+}
 import { useValidationPayload, type ValidationSelection } from './components/ValidationLayer'
 import type { NoiseComputeData } from './types/noise'
 import { DEFAULT_BASEMAP, type BasemapId } from './utils/basemaps'
@@ -93,10 +102,13 @@ function MapApp() {
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   // Bookable-stays overlay (Stay22 pilot): no panel UI yet — enabled only via
   // Bookable-stays overlay: the panel toggle drives it; a shared link's
-  // `stay=1|hotel|rental` URL param preselects it.
-  const [stayFilters, setStayFilters] = useState<StayFilters>(
-    () => ({ enabled: initial.stay != null, stayType: initial.stay ?? 'all' }),
-  )
+  // `stay=1|hotel|rental|none` URL param preselects it. Both families are on
+  // by default so enabling the layer shows everything.
+  const [stayFilters, setStayFilters] = useState<StayFilters>(() => ({
+    enabled: initial.stay != null,
+    hotels: initial.stay == null || initial.stay === 'all' || initial.stay === 'hotel',
+    rentals: initial.stay == null || initial.stay === 'all' || initial.stay === 'rental',
+  }))
   const stayFiltersRef = useRef(stayFilters)
   const [selectedStay, setSelectedStay] = useState<Stay | null>(null)
   // Mobile locate box lives in the BasemapBar row (one container = one
@@ -166,7 +178,7 @@ function MapApp() {
     detailPosition: { lat: number; lng: number } | null
     basemap: BasemapId
     rasterOverlays: Record<string, boolean>
-    stay: 'all' | 'hotel' | 'rental' | null
+    stay: 'all' | 'hotel' | 'rental' | 'none' | null
   }>) => {
     // Never serialize the pre-resolution language fallback (see
     // initialViewPendingRef above) — first visits carry no hash anyway.
@@ -182,9 +194,7 @@ function MapApp() {
       basemap: overrides?.basemap ?? basemapRef.current,
       rasterOverlays: overrides?.rasterOverlays ?? rasterOverlaysRef.current,
       validation: validationEnabled,
-      stay: overrides?.stay !== undefined
-        ? overrides.stay
-        : stayFiltersRef.current.enabled ? stayFiltersRef.current.stayType : null,
+      stay: overrides?.stay !== undefined ? overrides.stay : stayParam(stayFiltersRef.current),
     })
   }, [updateUrl, validationEnabled])
 
@@ -260,10 +270,11 @@ function MapApp() {
   const handleStayChange = useCallback((next: StayFilters) => {
     // Disabling or switching Hotels/Apartments invalidates the open card —
     // the pins it came from are about to change under it.
-    if (!next.enabled || next.stayType !== stayFiltersRef.current.stayType) setSelectedStay(null)
+    const cur = stayFiltersRef.current
+    if (!next.enabled || next.hotels !== cur.hotels || next.rentals !== cur.rentals) setSelectedStay(null)
     setStayFilters(next)
     stayFiltersRef.current = next
-    syncUrl({ stay: next.enabled ? next.stayType : null })
+    syncUrl({ stay: stayParam(next) })
   }, [syncUrl])
 
   // ONE card at a time (owner 2026-07-29): picking a pin closes the noise

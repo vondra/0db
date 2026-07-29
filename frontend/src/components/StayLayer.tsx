@@ -9,7 +9,8 @@ import { paletteRgb } from '../lib/heatmap-palette'
 
 export interface StayFilters {
   enabled: boolean
-  stayType: 'all' | 'hotel' | 'rental'
+  hotels: boolean
+  rentals: boolean
 }
 
 export interface Stay {
@@ -36,7 +37,7 @@ interface StayLayerProps {
 
 // Below this zoom a viewport exceeds the server's bbox cap — above it the
 // server scales density itself (coarse H3 representatives when zoomed out,
-// the full flat list at city-block spans).
+// the full flat list at street spans).
 const MIN_ZOOM = 7
 // Bucket grid for cacheable URLs — panning within a cell reuses the
 // browser/server cache instead of minting new requests. Zoom-tiered so deep
@@ -48,22 +49,43 @@ const NO_NOISE_GREY: [number, number, number] = [148, 163, 184]
 
 type StayResponse = {
   listings: Omit<Stay, 'noise' | 'nights'>[]
-  meta: { nights: number }
+  meta: { nights: number; partial?: boolean }
 }
 
 // Live listings are viewport-scoped; the cache holds the in-flight promise
 // (not just the settled result) so overlapping moveends for the same bucket
 // share one request instead of double-hitting the server's upstream budget.
-// Only the raw listings are cached — the dB join re-derives from the
-// module-level tile cache in stay-noise, so a tile-build flip never serves
-// stale samples.
+// Only the raw listings are cached — the dB join re-derives per bucket (see
+// joinCache), so the CURRENT bucket resamples on a tile-build flip; pins
+// pooled from other buckets keep their old dB until their bucket refetches
+// (bounded by this TTL).
 const fetchCache = new Map<string, { at: number; promise: Promise<Stay[]> }>()
 const FETCH_TTL_MS = 10 * 60 * 1000
 const FETCH_CACHE_MAX = 40
-// Joined (dB-attached) arrays per raw listing array: a same-bucket moveend
-// then re-delivers the SAME array reference, so setStays bails out instead
-// of rebuilding deck layers on every pan.
+// Joined (dB-attached) arrays per raw listing array — a same-bucket moveend
+// skips the re-sample. (The pool emits a fresh array each merge, so this
+// saves the sampling work, not the render.)
 const joinCache = new WeakMap<Stay[], { bk: string; joined: Stay[] }>()
+
+// Zoom-stability pool (owner 2026-07-29: an offer must not vanish when the
+// zoom changes): the server's buckets and density modes shift with zoom, so
+// the layer renders the union of everything seen this session, keyed by id —
+// fresh data wins, oldest entries evicted. Collision filtering keeps the
+// pile-up readable; the pool is cleared when the type filter changes because
+// pooled entries don't carry their accommodation type.
+const POOL_MAX = 1200
+const pool = new Map<string, Stay>()
+// Which tile build the pooled dB values came from — on a flip they grey out
+// (each bucket's refetch resamples its own pins against the new build).
+let poolNoiseBk: string | null = null
+function mergeIntoPool(incoming: Stay[]): Stay[] {
+  for (const s of incoming) {
+    pool.delete(s.id)
+    pool.set(s.id, s)
+  }
+  while (pool.size > POOL_MAX) pool.delete(pool.keys().next().value!)
+  return [...pool.values()]
+}
 
 // The epsilon keeps grid-boundary values in place — bare floor(50.05/0.05)
 // lands on 1000.999…, snapping a whole cell too far (mirrors the server).
@@ -76,20 +98,56 @@ export function formatPerNight(amount: number): string {
   return `€${amount}`
 }
 
+/** Pill screen-space box for a pin at (x, y) — mirrors the TextLayer's
+ *  pixel offset, font metrics and padding; shared with the tap guard. */
+function pillBox(x: number, y: number, label: string) {
+  const halfW = 7 + 3.5 * label.length
+  return { x1: x - halfW, y1: y - 26, x2: x + halfW, y2: y - 6 }
+}
+
+// Overlapping prices were unreadable (owner 2026-07-29) and deck's
+// CollisionFilterExtension silently blanks this TextLayer inside the
+// overlaid (non-interleaved) MapboxOverlay — so pill winners are picked on
+// the CPU: popularity-ranked greedy placement in screen space. Review count
+// moves slowly, so the same pills keep winning and zooming/panning doesn't
+// reshuffle which prices show. Runs per moveend over ≤ POOL_MAX pins.
+function declutterPills(stays: Stay[], map: { project: (c: [number, number]) => { x: number; y: number } }, width: number, height: number): Stay[] {
+  const priced = stays.filter(s => s.price != null)
+  priced.sort((a, b) => (b.rating.count ?? 0) - (a.rating.count ?? 0))
+  const placed: { x1: number; y1: number; x2: number; y2: number }[] = []
+  const out: Stay[] = []
+  for (const s of priced) {
+    const p = map.project([s.lng, s.lat])
+    if (p.x < -60 || p.x > width + 60 || p.y < -40 || p.y > height + 40) continue
+    const r = pillBox(p.x, p.y, formatPerNight(s.price!.perNight))
+    if (placed.some(q => q.x1 < r.x2 + 2 && r.x1 < q.x2 + 2 && q.y1 < r.y2 + 2 && r.y1 < q.y2 + 2)) continue
+    placed.push(r)
+    out.push(s)
+  }
+  return out
+}
+
 function loadListings(url: string): Promise<Stay[]> {
   let entry = fetchCache.get(url)
   if (!entry || Date.now() - entry.at >= FETCH_TTL_MS) {
+    const partial = { v: false }
     const promise = (async () => {
       const res = await fetch(url)
       if (!res.ok) throw new Error(`stay ${res.status}`)
       const data: StayResponse = await res.json()
+      partial.v = data.meta.partial === true
       return data.listings.map((l): Stay => ({ ...l, noise: null, nights: data.meta.nights }))
     })()
     entry = { at: Date.now(), promise }
     fetchCache.delete(url) // re-insert so a refreshed bucket is newest for eviction
     fetchCache.set(url, entry)
-    // A failed bucket must not poison the cache for its whole TTL.
-    promise.catch(() => { if (fetchCache.get(url) === entry) fetchCache.delete(url) })
+    const self = entry
+    // A failed bucket must not poison the cache for its whole TTL; a partial
+    // (server window-truncated) set shows now but retries on the next moveend.
+    promise.then(
+      () => { if (partial.v && fetchCache.get(url) === self) fetchCache.delete(url) },
+      () => { if (fetchCache.get(url) === self) fetchCache.delete(url) },
+    )
     while (fetchCache.size > FETCH_CACHE_MAX) fetchCache.delete(fetchCache.keys().next().value!)
   }
   return entry.promise
@@ -109,9 +167,13 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
   const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
   const [stays, setStays] = useState<Stay[]>([])
   const [view, setView] = useState<{ w: number; s: number; e: number; n: number; z: number } | null>(null)
-  // Pins of the previously selected type must not survive a failed fetch of
-  // the new type — "Hotels" showing apartments would be silently wrong.
-  const appliedTypeRef = useRef(filters.stayType)
+  // Pins of the previously selected type must not survive a type switch —
+  // "Hotels" showing apartments would be silently wrong (pool included).
+  const typeKey = `${filters.hotels}|${filters.rentals}`
+  const appliedTypeRef = useRef(typeKey)
+  // Declutter winners — the tap guard suppresses the noise popup only for
+  // pill boxes that are actually visible (a hidden pill would eat the tap).
+  const pillIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     if (!mapRef) return
@@ -146,10 +208,11 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
         const dx = x - p.x
         const dy = y - p.y
         if (dx * dx + dy * dy <= 49) return true // dot: 5 px radius + 1.5 stroke + slack
-        // Price pill above the dot: text box at pixel offset [0,-16].
-        if (s.price != null &&
-            Math.abs(dx) <= 7 + 3.5 * formatPerNight(s.price.perNight).length &&
-            dy >= -26 && dy <= -6) return true
+        // Pill box above the dot — visible (declutter-winning) pills only.
+        if (s.price != null && pillIdsRef.current.has(s.id)) {
+          const r = pillBox(p.x, p.y, formatPerNight(s.price.perNight))
+          if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return true
+        }
       }
       return false
     })
@@ -157,13 +220,15 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
 
   // Fetch the viewport bucket. Pins render as soon as listings arrive (grey,
   // no dB yet); the noise join lands as a second state update so a slow tile
-  // never delays first paint (owner 2026-07-29: "načítá to hrozně pomalu").
+  // never delays first paint.
   useEffect(() => {
     if (!filters.enabled || !view || view.z < MIN_ZOOM) { setStays([]); return }
-    if (appliedTypeRef.current !== filters.stayType) {
-      appliedTypeRef.current = filters.stayType
+    if (appliedTypeRef.current !== typeKey) {
+      appliedTypeRef.current = typeKey
+      pool.clear()
       setStays([])
     }
+    if (!filters.hotels && !filters.rentals) { setStays([]); return }
     const grid = gridFor(Math.max(view.n - view.s, view.e - view.w))
     const bbox = {
       swlat: snap(view.s, false, grid), swlng: snap(view.w, false, grid),
@@ -172,7 +237,7 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
     // Mirror of the server's span cap — skipping beats a guaranteed 400.
     if (+bbox.nelat - +bbox.swlat > 12 || +bbox.nelng - +bbox.swlng > 12) { setStays([]); return }
     const params = new URLSearchParams(bbox)
-    if (filters.stayType !== 'all') params.set('type', filters.stayType)
+    if (!(filters.hotels && filters.rentals)) params.set('type', filters.hotels ? 'hotel' : 'rental')
 
     let cancelled = false
     void (async () => {
@@ -180,32 +245,43 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
         const listings = await loadListings(`/api/stay?${params}`)
         if (cancelled) return
         const bk = build ? buildKey(build, ['total']) : null
+        if (bk && poolNoiseBk !== bk) {
+          if (poolNoiseBk != null) {
+            for (const [id, s] of pool) if (s.noise != null) pool.set(id, { ...s, noise: null })
+          }
+          poolNoiseBk = bk
+        }
         const cachedJoin = joinCache.get(listings)
-        if (bk && cachedJoin?.bk === bk) { setStays(cachedJoin.joined); return }
-        setStays(listings)
+        if (bk && cachedJoin?.bk === bk) { setStays(mergeIntoPool(cachedJoin.joined)); return }
+        setStays(mergeIntoPool(listings))
         if (!bk || !build) return
         const noise = await sampleNoiseAt(build, listings)
         if (cancelled) return
         const joined = listings.map((l, i) => ({ ...l, noise: noise[i] }))
         joinCache.set(listings, { bk, joined })
-        setStays(joined)
+        setStays(mergeIntoPool(joined))
       } catch { /* keep previous pins; the next moveend retries */ }
     })()
     return () => { cancelled = true }
-  }, [filters.enabled, filters.stayType, build, view])
+  }, [filters.enabled, filters.hotels, filters.rentals, typeKey, build, view])
 
-  // Rebuild deck layers only when a fetch lands or the zoom gate flips —
-  // deck clips off-screen points for free, so no per-pan re-filtering.
+  // Layers rebuild per pool merge and per moveend (pill winners depend on
+  // screen space) — ≤ POOL_MAX points, cheap for deck.
   const gateOpen = filters.enabled && view != null && view.z >= MIN_ZOOM
   useEffect(() => {
-    if (!overlay) return
-    overlay.setProps({ layers: gateOpen && stays.length > 0 ? makeLayers(stays, onStaySelect) : [] })
-  }, [overlay, stays, gateOpen, onStaySelect])
+    if (!overlay || !mapRef) return
+    if (!gateOpen || stays.length === 0) { pillIdsRef.current = new Set(); overlay.setProps({ layers: [] }); return }
+    const map = mapRef.getMap()
+    const canvas = map.getCanvas()
+    const pills = declutterPills(stays, map, canvas.clientWidth, canvas.clientHeight)
+    pillIdsRef.current = new Set(pills.map(p => p.id))
+    overlay.setProps({ layers: makeLayers(stays, pills, onStaySelect) })
+  }, [overlay, mapRef, stays, gateOpen, onStaySelect, view])
 
   return null
 }
 
-function makeLayers(data: Stay[], onSelect?: (s: Stay | null) => void) {
+function makeLayers(data: Stay[], pills: Stay[], onSelect?: (s: Stay | null) => void) {
   const dbColor = (s: Stay): [number, number, number] =>
     s.noise != null ? paletteRgb(s.noise) : NO_NOISE_GREY
   // No guard stamp here — attachPinTapGuard already stamped in the pointerup
@@ -234,10 +310,12 @@ function makeLayers(data: Stay[], onSelect?: (s: Stay | null) => void) {
       onClick,
     }),
     // Airbnb-style price pill above the dot; the border repeats the dot's dB
-    // colour so price and noise read together at a glance.
+    // colour so price and noise read together at a glance. Collision-filtered
+    // (owner 2026-07-29: overlapping prices were unreadable) — popular stays
+    // win the spot, their dots stay visible and clickable underneath.
     new TextLayer<Stay>({
       id: 'stays-price',
-      data: data.filter(s => s.price),
+      data: pills,
       getPosition: (s) => [s.lng, s.lat],
       getText: (s) => formatPerNight(s.price!.perNight),
       getPixelOffset: [0, -16],
