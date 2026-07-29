@@ -17,6 +17,12 @@ import type { SelectedLocation } from './components/FlyToLocation'
 import type { RealEstateFilters, Property } from './components/RealEstateLayer'
 import type { StayFilters, Stay } from './components/StayLayer'
 
+function localStayDate(offsetDays: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offsetDays)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** StayFilters → the `stay` URL token (null = layer off, omitted from the hash). */
 function stayParam(f: StayFilters): 'all' | 'hotel' | 'rental' | 'none' | null {
   if (!f.enabled) return null
@@ -108,6 +114,14 @@ function MapApp() {
     enabled: initial.stay != null,
     hotels: initial.stay == null || initial.stay === 'all' || initial.stay === 'hotel',
     rentals: initial.stay == null || initial.stay === 'all' || initial.stay === 'rental',
+    // Prefilled stay window (owner 2026-07-29, Booking/Google convention:
+    // an empty date field reads as broken): today + 2 nights, local calendar.
+    checkin: localStayDate(0),
+    checkout: localStayDate(2),
+    adults: null,
+    maxPrice: null,
+    minStars: null,
+    minRating: null,
   }))
   const stayFiltersRef = useRef(stayFilters)
   const [selectedStay, setSelectedStay] = useState<Stay | null>(null)
@@ -268,10 +282,9 @@ function MapApp() {
   }, [closeNoiseDetail, handleDetailPositionChange])
 
   const handleStayChange = useCallback((next: StayFilters) => {
-    // Disabling or switching Hotels/Apartments invalidates the open card —
-    // the pins it came from are about to change under it.
-    const cur = stayFiltersRef.current
-    if (!next.enabled || next.hotels !== cur.hotels || next.rentals !== cur.rentals) setSelectedStay(null)
+    // Any filter change invalidates the open card — the pins it came from
+    // (type, dates, price band…) are about to change under it.
+    setSelectedStay(null)
     setStayFilters(next)
     stayFiltersRef.current = next
     syncUrl({ stay: stayParam(next) })

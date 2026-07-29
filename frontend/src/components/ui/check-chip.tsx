@@ -20,10 +20,10 @@ export function CheckChip({ checked, label, onToggle, testId }: {
       onClick={onToggle}
       data-testid={testId}
       aria-pressed={checked}
-      className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs cursor-pointer transition-colors ${
-        checked
-          ? 'border-primary/40 bg-primary/10 text-foreground'
-          : 'border-border bg-background text-muted-foreground hover:bg-black/5'
+      // White in both states (owner 2026-07-29: the filled checkbox square is
+      // signal enough; a tinted background just competes with the primary CTA).
+      className={`inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs cursor-pointer transition-colors hover:bg-black/5 ${
+        checked ? 'text-foreground' : 'text-muted-foreground'
       }`}
     >
       <span

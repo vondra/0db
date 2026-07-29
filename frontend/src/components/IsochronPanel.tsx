@@ -53,7 +53,7 @@ export default function IsochronPanel({ location, onGo, active }: IsochronPanelP
         <div className="flex items-center gap-2 ml-auto">
           <CheckChip checked={walk} label="Walk" onToggle={() => setWalk(!walk)} testId="isochron-walk" />
           <CheckChip checked={car} label="Car" onToggle={() => setCar(!car)} testId="isochron-car" />
-          <Button variant="default" size="xs" onClick={handleGo} disabled={!location || (!walk && !car)}><Radar />Show area</Button>
+          <Button variant="default" size="sm" onClick={handleGo} disabled={!location || (!walk && !car)}><Radar />Show area</Button>
         </div>
       </div>
       {!location && <div className="text-xs text-muted-foreground mt-1">Search for a location first</div>}

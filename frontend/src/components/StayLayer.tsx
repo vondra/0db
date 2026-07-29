@@ -11,6 +11,14 @@ export interface StayFilters {
   enabled: boolean
   hotels: boolean
   rentals: boolean
+  /** YYYY-MM-DD; both set = real stay window, else the server's default. */
+  checkin: string | null
+  checkout: string | null
+  adults: number | null
+  /** € per night (forwarded as Stay22's USD-based `max` — close enough for a filter). */
+  maxPrice: number | null
+  minStars: number | null
+  minRating: number | null
 }
 
 export interface Stay {
@@ -24,7 +32,7 @@ export interface Stay {
   freeCancellation: boolean
   price: { total: number; perNight: number } | null
   url: string
-  /** Nights the quoted price covers (from the server's default stay window). */
+  /** Nights the quoted price covers (picked dates, else the server default). */
   nights: number
   /** Total Lden sampled from the heatmap tiles; null where nothing is computed. */
   noise: number | null
@@ -167,10 +175,12 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
   const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
   const [stays, setStays] = useState<Stay[]>([])
   const [view, setView] = useState<{ w: number; s: number; e: number; n: number; z: number } | null>(null)
-  // Pins of the previously selected type must not survive a type switch —
-  // "Hotels" showing apartments would be silently wrong (pool included).
-  const typeKey = `${filters.hotels}|${filters.rentals}`
-  const appliedTypeRef = useRef(typeKey)
+  // Pins fetched under the previous filter set must not survive a filter
+  // change — "Hotels only" showing apartments, or pins priced for other
+  // dates, would be silently wrong (pool included).
+  const filterKey = [filters.hotels, filters.rentals, filters.checkin, filters.checkout,
+    filters.adults, filters.maxPrice, filters.minStars, filters.minRating].join('|')
+  const appliedTypeRef = useRef(filterKey)
   // Declutter winners — the tap guard suppresses the noise popup only for
   // pill boxes that are actually visible (a hidden pill would eat the tap).
   const pillIdsRef = useRef<Set<string>>(new Set())
@@ -223,8 +233,8 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
   // never delays first paint.
   useEffect(() => {
     if (!filters.enabled || !view || view.z < MIN_ZOOM) { setStays([]); return }
-    if (appliedTypeRef.current !== typeKey) {
-      appliedTypeRef.current = typeKey
+    if (appliedTypeRef.current !== filterKey) {
+      appliedTypeRef.current = filterKey
       pool.clear()
       setStays([])
     }
@@ -238,6 +248,14 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
     if (+bbox.nelat - +bbox.swlat > 12 || +bbox.nelng - +bbox.swlng > 12) { setStays([]); return }
     const params = new URLSearchParams(bbox)
     if (!(filters.hotels && filters.rentals)) params.set('type', filters.hotels ? 'hotel' : 'rental')
+    if (filters.checkin && filters.checkout) {
+      params.set('checkin', filters.checkin)
+      params.set('checkout', filters.checkout)
+    }
+    if (filters.adults != null) params.set('adults', String(filters.adults))
+    if (filters.maxPrice != null) params.set('max', String(filters.maxPrice))
+    if (filters.minStars != null) params.set('minstars', String(filters.minStars))
+    if (filters.minRating != null) params.set('minrating', String(filters.minRating))
 
     let cancelled = false
     void (async () => {
@@ -263,7 +281,7 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
       } catch { /* keep previous pins; the next moveend retries */ }
     })()
     return () => { cancelled = true }
-  }, [filters.enabled, filters.hotels, filters.rentals, typeKey, build, view])
+  }, [filters, filterKey, build, view])
 
   // Layers rebuild per pool merge and per moveend (pill winners depend on
   // screen space) — ≤ POOL_MAX points, cheap for deck.

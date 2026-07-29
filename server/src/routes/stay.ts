@@ -91,6 +91,28 @@ function defaultDates(): { checkin: string; checkout: string; nights: number } {
   return { checkin: day(CHECKIN_OFFSET_DAYS), checkout: day(CHECKIN_OFFSET_DAYS + NIGHTS), nights: NIGHTS }
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+// Shape AND calendar validity: V8 normalizes 2026-09-31 to Oct 1, which
+// would let two spellings of one stay alias different upstream requests
+// under one cache key — a canonical round-trip rejects those.
+const canonicalDate = (s: string): boolean =>
+  DATE_RE.test(s) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s
+/** Client-picked stay window; anything unparseable or unreasonable falls back
+ *  to the defaults rather than erroring — the filter is best-effort. */
+export function pickDates(checkin?: string, checkout?: string): { checkin: string; checkout: string; nights: number } {
+  if (checkin && checkout && canonicalDate(checkin) && canonicalDate(checkout)) {
+    const nights = Math.round((Date.parse(checkout) - Date.parse(checkin)) / 86_400_000)
+    const leadDays = (Date.parse(checkin) - Date.now()) / 86_400_000
+    if (nights >= 1 && nights <= 30 && leadDays >= -1 && leadDays <= 540) return { checkin, checkout, nights }
+  }
+  return defaultDates()
+}
+
+const intIn = (v: string | undefined, lo: number, hi: number): number | null => {
+  const n = Number(v)
+  return Number.isInteger(n) && n >= lo && n <= hi ? n : null
+}
+
 // The epsilon keeps grid-boundary values in place — bare floor(50.05/0.05)
 // lands on 1000.999…, snapping a whole cell too far and doubling the box.
 // Mirrored in frontend/src/components/StayLayer.tsx so client URLs land on
@@ -172,9 +194,17 @@ export async function stayRoutes(app: FastifyInstance): Promise<void> {
     }
     const type = q.type === 'hotel' || q.type === 'rental' ? q.type : null
 
-    const dates = defaultDates()
+    // Optional owner-facing filters — validated, forwarded, and part of the
+    // cache key. Stay22's `max` is per-night USD pre-conversion; the client
+    // enters €, close enough for a filter.
+    const dates = pickDates(q.checkin, q.checkout)
+    const adults = intIn(q.adults, 1, 16)
+    const maxPrice = intIn(q.max, 1, 100_000)
+    const minStars = intIn(q.minstars, 1, 5)
+    const minRating = intIn(q.minrating, 1, 10)
     const bbox = { swlat: snap(swlat, false), swlng: snap(swlng, false), nelat: snap(nelat, true), nelng: snap(nelng, true) }
-    const key = `${bbox.swlat},${bbox.swlng},${bbox.nelat},${bbox.nelng}|${type ?? 'all'}|${dates.checkin}`
+    const key = [bbox.swlat, bbox.swlng, bbox.nelat, bbox.nelng, type ?? 'all',
+      dates.checkin, dates.nights, adults, maxPrice, minStars, minRating].join('|')
 
     // Success responses only — an explicit max-age on a 429/502 would let
     // shared caches (Cloudflare) pin the error for 5 minutes. A partial
@@ -206,6 +236,10 @@ export async function stayRoutes(app: FastifyInstance): Promise<void> {
         aid: AID,
         campaign: '0db',
       })
+      if (adults != null) params.set('adults', String(adults))
+      if (maxPrice != null) params.set('max', String(maxPrice))
+      if (minStars != null) params.set('minstarrating', String(minStars))
+      if (minRating != null) params.set('minguestrating', String(minRating))
       const spanLat = parseFloat(bbox.nelat) - parseFloat(bbox.swlat)
       const spanLng = parseFloat(bbox.nelng) - parseFloat(bbox.swlng)
       // Street spans try the complete flat list first; anything wider goes

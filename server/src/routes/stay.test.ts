@@ -157,6 +157,37 @@ test('GET /api/stay falls back to uniform sampling when flat mode truncates', as
   assert.equal(response.headers['cache-control'], 'public, max-age=300')
 })
 
+test('GET /api/stay forwards owner filters and prices per real night', async (t) => {
+  resetUpstreamWindowForTests()
+  const day = (o: number) => new Date(Date.now() + o * 86_400_000).toISOString().slice(0, 10)
+  const urls: string[] = []
+  const fetchMock = mock.method(globalThis, 'fetch', async (url: any) => {
+    urls.push(String(url))
+    return new Response(JSON.stringify({ results: [SAMPLE], meta: { total: 1 } }), { status: 200 })
+  })
+  t.after(() => fetchMock.mock.restore())
+
+  const app = Fastify()
+  await app.register(stayRoutes)
+  t.after(async () => app.close())
+
+  const qs = `swlat=48.40&swlng=17.40&nelat=48.42&nelng=17.42&checkin=${day(10)}&checkout=${day(13)}&adults=3&max=120&minstars=4&minrating=8`
+  const response = await app.inject(`/api/stay?${qs}`)
+  assert.equal(response.statusCode, 200)
+  const upstream = urls[0]
+  for (const frag of [`checkin=${day(10)}`, `checkout=${day(13)}`, 'adults=3', 'max=120', 'minstarrating=4', 'minguestrating=8']) {
+    assert.ok(upstream.includes(frag), `upstream missing ${frag}`)
+  }
+  const listing = response.json().listings[0]
+  assert.equal(response.json().meta.nights, 3)
+  assert.equal(listing.price.perNight, Math.round(299 / 3))
+
+  // Nonsense dates fall back to the defaults instead of erroring.
+  const bad = await app.inject('/api/stay?swlat=48.44&swlng=17.44&nelat=48.46&nelng=17.46&checkin=2020-01-01&checkout=2020-01-05')
+  assert.equal(bad.statusCode, 200)
+  assert.equal(bad.json().meta.nights, 2)
+})
+
 test('GET /api/stay serves the second hit from cache', async (t) => {
   resetUpstreamWindowForTests()
   const upstream = { results: [SAMPLE] }
