@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from 'react'
+import { useState, useCallback, useRef, useEffect, lazy, Suspense } from 'react'
 import { Tooltip } from '@base-ui/react/tooltip'
 import MapView from './components/MapView'
 import SearchBar from './components/SearchBar'
@@ -92,12 +92,12 @@ function MapApp() {
   })
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null)
   // Bookable-stays overlay (Stay22 pilot): no panel UI yet — enabled only via
-  // `stay=1|hotel|rental` in the URL, so dev previews exercise it while the
-  // default map stays untouched.
-  const stayFilters = useMemo<StayFilters>(
+  // Bookable-stays overlay: the panel toggle drives it; a shared link's
+  // `stay=1|hotel|rental` URL param preselects it.
+  const [stayFilters, setStayFilters] = useState<StayFilters>(
     () => ({ enabled: initial.stay != null, stayType: initial.stay ?? 'all' }),
-    [initial.stay],
   )
+  const stayFiltersRef = useRef(stayFilters)
   const [selectedStay, setSelectedStay] = useState<Stay | null>(null)
   // Mobile locate box lives in the BasemapBar row (one container = one
   // baseline); it fires the map's GeolocateControl through this ref.
@@ -166,6 +166,7 @@ function MapApp() {
     detailPosition: { lat: number; lng: number } | null
     basemap: BasemapId
     rasterOverlays: Record<string, boolean>
+    stay: 'all' | 'hotel' | 'rental' | null
   }>) => {
     // Never serialize the pre-resolution language fallback (see
     // initialViewPendingRef above) — first visits carry no hash anyway.
@@ -181,9 +182,11 @@ function MapApp() {
       basemap: overrides?.basemap ?? basemapRef.current,
       rasterOverlays: overrides?.rasterOverlays ?? rasterOverlaysRef.current,
       validation: validationEnabled,
-      stay: initial.stay,
+      stay: overrides?.stay !== undefined
+        ? overrides.stay
+        : stayFiltersRef.current.enabled ? stayFiltersRef.current.stayType : null,
     })
-  }, [updateUrl, validationEnabled, initial.stay])
+  }, [updateUrl, validationEnabled])
 
   const handleRasterOverlaysChange = useCallback((next: Record<string, boolean>) => {
     setRasterOverlays(next)
@@ -208,17 +211,28 @@ function MapApp() {
     syncUrl({ quietThreshold: threshold })
   }, [syncUrl])
 
+  // Everything the open noise detail owns — data, error, its map highlight.
+  // One closer keeps the pin-card exclusivity paths from diverging (a pin
+  // click once closed the card but left the highlight geometry behind).
+  const closeNoiseDetail = useCallback(() => {
+    setNoiseDetailData(null)
+    setNoiseDetailError(null)
+    setHighlightGeometry(null)
+  }, [])
+
   const handleDetailPositionChange = useCallback((pos: { lat: number; lng: number } | null) => {
     setDetailPosition(pos)
     // Fresh click: clear stale data + error so the new skeleton renders
     // for the new position (Codex /gg 2026-05-24 WARNING — position-match
-    // gating in the card is the back-stop).
+    // gating in the card is the back-stop). The right column shows ONE card
+    // at a time (owner 2026-07-29), so a noise popup also closes any pin card.
     if (pos) {
-      setNoiseDetailData(null)
-      setNoiseDetailError(null)
+      closeNoiseDetail()
+      setSelectedStay(null)
+      setSelectedProperty(null)
     }
     syncUrl({ detailPosition: pos })
-  }, [syncUrl])
+  }, [syncUrl, closeNoiseDetail])
 
   const handleDetailData = useCallback((d: NoiseComputeData | null) => {
     setNoiseDetailData(d)
@@ -239,11 +253,38 @@ function MapApp() {
   }, [])
 
   const handleNoiseClose = useCallback(() => {
-    setNoiseDetailData(null)
-    setNoiseDetailError(null)
-    setHighlightGeometry(null)
+    closeNoiseDetail()
     handleDetailPositionChange(null)
-  }, [handleDetailPositionChange])
+  }, [closeNoiseDetail, handleDetailPositionChange])
+
+  const handleStayChange = useCallback((next: StayFilters) => {
+    // Disabling or switching Hotels/Apartments invalidates the open card —
+    // the pins it came from are about to change under it.
+    if (!next.enabled || next.stayType !== stayFiltersRef.current.stayType) setSelectedStay(null)
+    setStayFilters(next)
+    stayFiltersRef.current = next
+    syncUrl({ stay: next.enabled ? next.stayType : null })
+  }, [syncUrl])
+
+  // ONE card at a time (owner 2026-07-29): picking a pin closes the noise
+  // popup and any other pin card, and vice versa.
+  const handleStaySelect = useCallback((s: Stay | null) => {
+    setSelectedStay(s)
+    if (s) {
+      setSelectedProperty(null)
+      closeNoiseDetail()
+      handleDetailPositionChange(null)
+    }
+  }, [closeNoiseDetail, handleDetailPositionChange])
+
+  const handlePropertySelect = useCallback((p: Property | null) => {
+    setSelectedProperty(p)
+    if (p) {
+      setSelectedStay(null)
+      closeNoiseDetail()
+      handleDetailPositionChange(null)
+    }
+  }, [closeNoiseDetail, handleDetailPositionChange])
 
   const handleIsochronGo = useCallback(async (req: { lat: number; lng: number; time: number; modes: string[] }) => {
     try {
@@ -294,6 +335,8 @@ function MapApp() {
               onQuietThresholdChange={handleQuietThresholdChange}
               realEstateFilters={realEstateFilters}
               onRealEstateChange={setRealEstateFilters}
+              stayFilters={stayFilters}
+              onStayChange={handleStayChange}
               rasterOverlays={rasterOverlays}
               onRasterOverlayChange={handleRasterOverlaysChange}
             />
@@ -371,9 +414,9 @@ function MapApp() {
         quietThreshold={quietThreshold}
         highlightGeometry={highlightGeometry}
         realEstateFilters={realEstateFilters}
-        onPropertySelect={setSelectedProperty}
+        onPropertySelect={handlePropertySelect}
         stayFilters={stayFilters}
-        onStaySelect={setSelectedStay}
+        onStaySelect={handleStaySelect}
         rasterOverlays={rasterOverlays}
         validationEnabled={validationEnabled}
         validationPayload={validationPayload}
@@ -411,6 +454,8 @@ function MapApp() {
           onQuietThresholdChange={handleQuietThresholdChange}
           realEstateFilters={realEstateFilters}
           onRealEstateChange={setRealEstateFilters}
+          stayFilters={stayFilters}
+          onStayChange={handleStayChange}
           rasterOverlays={rasterOverlays}
           onRasterOverlayChange={handleRasterOverlaysChange}
         />
@@ -431,6 +476,20 @@ function MapApp() {
         onClose={() => { setNoiseDetailData(null); setNoiseDetailError(null); handleDetailPositionChange(null) }}
         onHighlight={setHighlightGeometry}
       />
+
+      {/* Mobile: stay card as a bottom sheet — the desktop right column that
+          hosts it is hidden below md, and a guarded pin tap must never end
+          in nothing. */}
+      {selectedStay && (
+        <div className="fixed bottom-0 left-0 right-0 z-[2000] md:hidden">
+          <div className="bg-background rounded-t-xl shadow-2xl">
+            <StayCard
+              stay={selectedStay}
+              onClose={() => setSelectedStay(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
     </Tooltip.Provider>
   )

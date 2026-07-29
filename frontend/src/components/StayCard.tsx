@@ -1,6 +1,9 @@
 // Detail card for a clicked stay pin: photo, price, rating, dB, book-out link.
+import { useEffect, useState } from 'react'
 import { X, Star } from 'lucide-react'
 import { ldenToColor } from '../utils/noise-colors'
+import { useTileBuild } from '../lib/tile-urls'
+import { sampleNoiseAt } from '../lib/stay-noise'
 import { formatPerNight, type Stay } from './StayLayer'
 
 interface StayCardProps {
@@ -9,6 +12,20 @@ interface StayCardProps {
 }
 
 export default function StayCard({ stay: s, onClose }: StayCardProps) {
+  const build = useTileBuild()
+  // A card can open from a pin whose dB join hasn't landed yet (pins render
+  // before sampling finishes) and the selection keeps that early object —
+  // sample this one point directly; the tile is almost always cached.
+  const [sampled, setSampled] = useState<number | null>(null)
+  useEffect(() => {
+    setSampled(null)
+    if (s.noise != null || !build) return
+    let cancelled = false
+    void sampleNoiseAt(build, [s]).then(([n]) => { if (!cancelled) setSampled(n) })
+    return () => { cancelled = true }
+  }, [s, build])
+  const noise = s.noise ?? sampled
+
   return (
     <div className="p-3">
       <div className="flex justify-between items-start mb-2">
@@ -47,14 +64,14 @@ export default function StayCard({ stay: s, onClose }: StayCardProps) {
         )}
       </div>
 
-      {s.noise != null && (
+      {noise != null && (
         <div className="flex items-center gap-1.5 mb-2">
           <span
             className="inline-block w-2.5 h-2.5 rounded-full"
-            style={{ backgroundColor: ldenToColor(s.noise) }}
+            style={{ backgroundColor: ldenToColor(noise) }}
           />
           <span className="text-xs text-muted-foreground">
-            Noise: <strong className="text-foreground">{s.noise.toFixed(1)} dB</strong>
+            Noise: <strong className="text-foreground">{noise.toFixed(1)} dB</strong>
           </span>
         </div>
       )}

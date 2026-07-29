@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MapboxOverlay } from '@deck.gl/mapbox'
 import { ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import { useMap } from 'react-map-gl/maplibre'
@@ -34,13 +34,16 @@ interface StayLayerProps {
   onStaySelect?: (stay: Stay | null) => void
 }
 
-// Below this zoom a viewport exceeds the server's bbox cap and pins would be
-// unreadably dense anyway — the layer stays empty until the user zooms in.
-const MIN_ZOOM = 11
-// Mirror of the server's bucket grid (see server/src/routes/stay.ts) so
-// panning within a cell reuses the browser/server cache instead of minting
-// new URLs.
-const GRID_DEG = 0.05
+// Below this zoom a viewport exceeds the server's bbox cap — above it the
+// server scales density itself (coarse H3 representatives when zoomed out,
+// the full flat list at city-block spans).
+const MIN_ZOOM = 7
+// Bucket grid for cacheable URLs — panning within a cell reuses the
+// browser/server cache instead of minting new requests. Zoom-tiered so deep
+// zooms get tight boxes (street spans unlock the server's flat mode) while
+// zoomed-out views don't churn buckets; every tier is a multiple of the
+// server's snap step (see server/src/routes/stay.ts).
+const gridFor = (rawSpan: number) => (rawSpan < 0.03 ? 0.01 : rawSpan < 3 ? 0.05 : 0.5)
 const NO_NOISE_GREY: [number, number, number] = [148, 163, 184]
 
 type StayResponse = {
@@ -51,39 +54,42 @@ type StayResponse = {
 // Live listings are viewport-scoped; the cache holds the in-flight promise
 // (not just the settled result) so overlapping moveends for the same bucket
 // share one request instead of double-hitting the server's upstream budget.
+// Only the raw listings are cached — the dB join re-derives from the
+// module-level tile cache in stay-noise, so a tile-build flip never serves
+// stale samples.
 const fetchCache = new Map<string, { at: number; promise: Promise<Stay[]> }>()
 const FETCH_TTL_MS = 10 * 60 * 1000
 const FETCH_CACHE_MAX = 40
+// Joined (dB-attached) arrays per raw listing array: a same-bucket moveend
+// then re-delivers the SAME array reference, so setStays bails out instead
+// of rebuilding deck layers on every pan.
+const joinCache = new WeakMap<Stay[], { bk: string; joined: Stay[] }>()
 
 // The epsilon keeps grid-boundary values in place — bare floor(50.05/0.05)
 // lands on 1000.999…, snapping a whole cell too far (mirrors the server).
-const snap = (v: number, up: boolean) => {
-  const q = v / GRID_DEG
-  return ((up ? Math.ceil(q - 1e-9) : Math.floor(q + 1e-9)) * GRID_DEG).toFixed(2)
+const snap = (v: number, up: boolean, grid: number) => {
+  const q = v / grid
+  return ((up ? Math.ceil(q - 1e-9) : Math.floor(q + 1e-9)) * grid).toFixed(2)
 }
 
 export function formatPerNight(amount: number): string {
   return `€${amount}`
 }
 
-function loadStays(url: string, build: Parameters<typeof sampleNoiseAt>[0]): Promise<Stay[]> {
-  // The joined noise values depend on the tile build, so a manifest flip must
-  // not serve samples decoded from the previous generation for a whole TTL.
-  const key = `${url}|${buildKey(build, ['total'])}`
-  let entry = fetchCache.get(key)
+function loadListings(url: string): Promise<Stay[]> {
+  let entry = fetchCache.get(url)
   if (!entry || Date.now() - entry.at >= FETCH_TTL_MS) {
     const promise = (async () => {
       const res = await fetch(url)
       if (!res.ok) throw new Error(`stay ${res.status}`)
       const data: StayResponse = await res.json()
-      const noise = await sampleNoiseAt(build, data.listings)
-      return data.listings.map((l, i): Stay => ({ ...l, noise: noise[i], nights: data.meta.nights }))
+      return data.listings.map((l): Stay => ({ ...l, noise: null, nights: data.meta.nights }))
     })()
     entry = { at: Date.now(), promise }
-    fetchCache.delete(key) // re-insert so a refreshed bucket is newest for eviction
-    fetchCache.set(key, entry)
+    fetchCache.delete(url) // re-insert so a refreshed bucket is newest for eviction
+    fetchCache.set(url, entry)
     // A failed bucket must not poison the cache for its whole TTL.
-    promise.catch(() => { if (fetchCache.get(key) === entry) fetchCache.delete(key) })
+    promise.catch(() => { if (fetchCache.get(url) === entry) fetchCache.delete(url) })
     while (fetchCache.size > FETCH_CACHE_MAX) fetchCache.delete(fetchCache.keys().next().value!)
   }
   return entry.promise
@@ -103,6 +109,9 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
   const [overlay, setOverlay] = useState<MapboxOverlay | null>(null)
   const [stays, setStays] = useState<Stay[]>([])
   const [view, setView] = useState<{ w: number; s: number; e: number; n: number; z: number } | null>(null)
+  // Pins of the previously selected type must not survive a failed fetch of
+  // the new type — "Hotels" showing apartments would be silently wrong.
+  const appliedTypeRef = useRef(filters.stayType)
 
   useEffect(() => {
     if (!mapRef) return
@@ -146,23 +155,42 @@ export default function StayLayer({ filters, onStaySelect }: StayLayerProps) {
     })
   }, [mapRef, filters.enabled, stays])
 
-  // Fetch the viewport bucket, then join each listing's dB from the tiles.
+  // Fetch the viewport bucket. Pins render as soon as listings arrive (grey,
+  // no dB yet); the noise join lands as a second state update so a slow tile
+  // never delays first paint (owner 2026-07-29: "načítá to hrozně pomalu").
   useEffect(() => {
-    if (!filters.enabled || !build || !view || view.z < MIN_ZOOM) { setStays([]); return }
-    const bbox = {
-      swlat: snap(view.s, false), swlng: snap(view.w, false),
-      nelat: snap(view.n, true), nelng: snap(view.e, true),
+    if (!filters.enabled || !view || view.z < MIN_ZOOM) { setStays([]); return }
+    if (appliedTypeRef.current !== filters.stayType) {
+      appliedTypeRef.current = filters.stayType
+      setStays([])
     }
-    // Mirror of the server's span cap — an ultrawide viewport at min zoom can
-    // exceed it, and skipping beats a guaranteed 400 on every moveend.
-    if (+bbox.nelat - +bbox.swlat > 1.5 || +bbox.nelng - +bbox.swlng > 1.5) { setStays([]); return }
+    const grid = gridFor(Math.max(view.n - view.s, view.e - view.w))
+    const bbox = {
+      swlat: snap(view.s, false, grid), swlng: snap(view.w, false, grid),
+      nelat: snap(view.n, true, grid), nelng: snap(view.e, true, grid),
+    }
+    // Mirror of the server's span cap — skipping beats a guaranteed 400.
+    if (+bbox.nelat - +bbox.swlat > 12 || +bbox.nelng - +bbox.swlng > 12) { setStays([]); return }
     const params = new URLSearchParams(bbox)
     if (filters.stayType !== 'all') params.set('type', filters.stayType)
 
     let cancelled = false
-    loadStays(`/api/stay?${params}`, build)
-      .then(loaded => { if (!cancelled) setStays(loaded) })
-      .catch(() => { /* keep previous pins; the next moveend retries */ })
+    void (async () => {
+      try {
+        const listings = await loadListings(`/api/stay?${params}`)
+        if (cancelled) return
+        const bk = build ? buildKey(build, ['total']) : null
+        const cachedJoin = joinCache.get(listings)
+        if (bk && cachedJoin?.bk === bk) { setStays(cachedJoin.joined); return }
+        setStays(listings)
+        if (!bk || !build) return
+        const noise = await sampleNoiseAt(build, listings)
+        if (cancelled) return
+        const joined = listings.map((l, i) => ({ ...l, noise: noise[i] }))
+        joinCache.set(listings, { bk, joined })
+        setStays(joined)
+      } catch { /* keep previous pins; the next moveend retries */ }
+    })()
     return () => { cancelled = true }
   }, [filters.enabled, filters.stayType, build, view])
 

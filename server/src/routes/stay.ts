@@ -9,24 +9,38 @@ import { EXPENSIVE_ROUTE_RATE_LIMIT } from '../rate-limit.js'
 // a global token bucket throttles upstream calls; when the budget is spent
 // a bucket serves its stale copy rather than erroring.
 const STAY22_URL = 'https://api.stay22.com/v2/accommodations'
-// Demo affiliate id until the owner's Stay22 Hub account exists; the env var
-// then switches attribution without a code change.
+// Affiliate id + API key come from the environment; without a key the route
+// degrades to the keyless demo tier (aid=stay22, 5 req/min, no payouts).
 const AID = process.env.STAY22_AID || 'stay22'
+const API_KEY = process.env.STAY22_API_KEY || null
 const CACHE_TTL_MS = 55 * 60 * 1000
 // Expired entries may still be served when the upstream budget is spent or
 // the upstream is down — but a quote older than this is worse than an empty
 // map (prices drift, listings close).
 const STALE_MAX_MS = 6 * 60 * 60 * 1000
 const CACHE_MAX = 300
-const UPSTREAM_PER_MIN = 4 // demo tier is 5/min; keep one in reserve (fixed window, no burst)
-const GRID_DEG = 0.05      // bbox snap (~5.5 km lat) — pan within a cell = cache hit
-// Refuse country-scale boxes. Sized so the widest sane viewport at the
-// client's minimum zoom (~4300 css px at z11, plus snap growth) still fits —
-// a tighter cap silently blanked the layer on ultrawide monitors.
-const MAX_SPAN_DEG = 1.5
-// One page must hold every H3 representative (see pickPrecision) — if the two
-// ever drift, cluster=top silently page-truncates to a spatially biased subset.
+// Authenticated tier publishes no hard number — 30/min is conservative and
+// an order below anything a map UI needs; keyless demo is 5/min, keep one
+// in reserve. Fixed sliding window, no burst.
+const UPSTREAM_PER_MIN = API_KEY ? 30 : 4
+// Server-side snap normalizes stray clients; honest clients pre-snap to a
+// zoom-tiered grid (0.01/0.05/0.5 — see StayLayer). All tiers are multiples
+// of this finest step, so re-snapping their values is an identity.
+const GRID_DEG = 0.01
+// Refuse world-scale boxes; anything under this works — zoomed-out viewports
+// get coarse H3 representatives, not a flat dump.
+const MAX_SPAN_DEG = 12
+// Upstream page size cap. A bucket may spend up to PAGES_MAX pages, so the
+// H3 precision fit (pickPrecision) targets PAGE_SIZE * PAGES_MAX cells — if
+// those drift apart, cluster=top silently truncates to a biased subset.
 const PAGE_SIZE = 100
+const PAGES_MAX = 3
+// At street spans the paged flat list is complete, so density is the point
+// (owner 2026-07-29: Václavák showed no hotels). Any wider and a flat list
+// truncates to Stay22's own ranking — which clusters spatially — so wider
+// boxes use one-per-H3-cell sampling instead. ~3×2 km keeps totals under
+// the page budget even in dense city cores (Václavák box ≈ 264).
+const FLAT_SPAN_DEG = 0.0301
 
 interface SlimStay {
   id: string
@@ -81,19 +95,18 @@ export const snap = (v: number, up: boolean) => {
   return ((up ? Math.ceil(q - 1e-9) : Math.floor(q + 1e-9)) * GRID_DEG).toFixed(2)
 }
 
-// Average H3 hex areas (km²) for resolutions r4..r10. r4 exists so even the
-// largest allowed box at the equator (~27,700 km²) stays under one page —
-// r5 alone would need ~110 cells there and silently truncate.
-const H3_AREA_KM2: [number, number][] = [[4, 1770.3], [5, 252.9], [6, 36.13], [7, 5.161], [8, 0.7373], [9, 0.1053], [10, 0.01505]]
+// Average H3 hex areas (km²) for resolutions r3..r10. r3 covers the largest
+// allowed box (12° at the equator, ~1.8M km², ~143 r3 cells ≤ the budget).
+const H3_AREA_KM2: [number, number][] = [[3, 12392.7], [4, 1770.3], [5, 252.9], [6, 36.13], [7, 5.161], [8, 0.7373], [9, 0.1053], [10, 0.01505]]
 
-// Finest H3 resolution whose cell count over the bbox still fits one page —
-// then `cluster=top` returns EVERY cell's best-rated stay and coverage is
-// uniform; a finer grid would page-truncate to an arbitrary spatial subset.
+// Finest H3 resolution whose cell count over the bbox still fits the page
+// budget — then `cluster=top` returns EVERY cell's best-rated stay and
+// coverage is uniform; a finer grid would truncate to a biased subset.
 export function pickPrecision(swlat: number, swlng: number, nelat: number, nelng: number): number {
   const midLat = ((swlat + nelat) / 2) * (Math.PI / 180)
   const areaKm2 = (nelat - swlat) * 111 * (nelng - swlng) * 111 * Math.cos(midLat)
   let res = H3_AREA_KM2[0][0]
-  for (const [r, hex] of H3_AREA_KM2) if (areaKm2 / hex <= PAGE_SIZE) res = r
+  for (const [r, hex] of H3_AREA_KM2) if (areaKm2 / hex <= PAGE_SIZE * PAGES_MAX) res = r
   return res
 }
 
@@ -183,28 +196,54 @@ export async function stayRoutes(app: FastifyInstance): Promise<void> {
         checkout: dates.checkout,
         pageSize: String(PAGE_SIZE),
         currency: 'eur',
-        // One best-rated stay per H3 cell, spread across the viewport — a flat
-        // list caps at one page of results that cluster wherever the city is
-        // densest and leaves the rest of the screen empty.
-        cluster: 'top',
-        precision: String(pickPrecision(parseFloat(bbox.swlat), parseFloat(bbox.swlng), parseFloat(bbox.nelat), parseFloat(bbox.nelng))),
         aid: AID,
         campaign: '0db',
       })
+      const spanLat = parseFloat(bbox.nelat) - parseFloat(bbox.swlat)
+      const spanLng = parseFloat(bbox.nelng) - parseFloat(bbox.swlng)
+      if (spanLat > FLAT_SPAN_DEG || spanLng > FLAT_SPAN_DEG) {
+        // One best-rated stay per H3 cell, spread across the viewport — a
+        // flat list at these spans clusters wherever the city is densest and
+        // leaves the rest of the screen empty. At city-block spans (flat
+        // mode) density is the point, so no clustering there.
+        params.set('cluster', 'top')
+        params.set('precision', String(pickPrecision(parseFloat(bbox.swlat), parseFloat(bbox.swlng), parseFloat(bbox.nelat), parseFloat(bbox.nelng))))
+      }
       if (type) params.set('type', type)
 
       pending = (async () => {
-        const res = await fetch(`${STAY22_URL}?${params}`, { signal: AbortSignal.timeout(12_000) })
-        if (!res.ok) throw new Error(`stay22 ${res.status}`)
-        const data: any = await res.json()
-        const listings = ((data?.results ?? []) as any[])
-          .slice(0, PAGE_SIZE) // never trust upstream to honour its own cap
-          .map(r => slim(r, dates.nights))
-          .filter((s): s is SlimStay => s !== null)
-        const payload: StayPayload = { listings, meta: { ...dates, currency: 'EUR' } }
-        cache.delete(key) // re-insert so a refreshed bucket is newest for eviction
-        cache.set(key, { at: Date.now(), payload })
-        while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!)
+        const results: any[] = []
+        let complete = true
+        for (let page = 1; page <= PAGES_MAX; page++) {
+          // Page 2+ costs its own upstream slot; when the window is spent,
+          // a partial page-1 result beats waiting.
+          if (page > 1 && !takeToken()) { complete = false; break }
+          params.set('page', String(page))
+          const res = await fetch(`${STAY22_URL}?${params}`, {
+            signal: AbortSignal.timeout(12_000),
+            headers: API_KEY ? { 'X-API-KEY': API_KEY } : undefined,
+          })
+          if (!res.ok) throw new Error(`stay22 ${res.status}`)
+          const data: any = await res.json()
+          const batch = ((data?.results ?? []) as any[]).slice(0, PAGE_SIZE)
+          results.push(...batch)
+          const total = num(data?.meta?.total)
+          if (batch.length < PAGE_SIZE || (total != null && results.length >= total)) break
+        }
+        const byId = new Map<string, SlimStay>()
+        for (const r of results) {
+          const s = slim(r, dates.nights)
+          if (s && !byId.has(s.id)) byId.set(s.id, s)
+        }
+        const payload: StayPayload = { listings: [...byId.values()], meta: { ...dates, currency: 'EUR' } }
+        // A window-truncated page set must not become the bucket's truth for
+        // a whole TTL (nor evict a complete stale entry) — serve it once and
+        // let the next request retry the missing pages.
+        if (complete) {
+          cache.delete(key) // re-insert so a refreshed bucket is newest for eviction
+          cache.set(key, { at: Date.now(), payload })
+          while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!)
+        }
         return payload
       })()
       inflight.set(key, pending)

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { TreePine } from 'lucide-react'
+import { TreePine, BedDouble } from 'lucide-react'
 import type { RealEstateFilters } from './RealEstateLayer'
+import type { StayFilters } from './StayLayer'
 import { QUIET_THRESHOLD_MIN, QUIET_THRESHOLD_MAX, QUIET_THRESHOLD_STEP } from '../hooks/useUrlState'
 import { Switch } from './ui/switch'
 
@@ -11,7 +12,16 @@ interface OverlayControlsProps {
   onQuietThresholdChange: (threshold: number) => void
   realEstateFilters: RealEstateFilters
   onRealEstateChange: (filters: RealEstateFilters) => void
+  stayFilters: StayFilters
+  onStayChange: (filters: StayFilters) => void
 }
+
+// Booking.com's own labels for the two accommodation families.
+const STAY_TYPES = [
+  { value: 'all', label: 'All' },
+  { value: 'hotel', label: 'Hotels' },
+  { value: 'rental', label: 'Apartments' },
+] as const
 
 function ToggleRow({ active, icon, label, tooltip, onClick }: {
   active: boolean; icon: React.ReactNode; label: string; tooltip: string; onClick: () => void
@@ -55,6 +65,7 @@ function NoiseSlider({ value, onChange, min, max, step = 1, testId }: {
 export default function OverlayControls({
   quietClustersEnabled, onQuietClustersChange,
   quietThreshold, onQuietThresholdChange,
+  stayFilters, onStayChange,
 }: OverlayControlsProps) {
   return (
     <div>
@@ -67,6 +78,32 @@ export default function OverlayControls({
       />
       {quietClustersEnabled && (
         <NoiseSlider value={quietThreshold} onChange={onQuietThresholdChange} min={QUIET_THRESHOLD_MIN} max={QUIET_THRESHOLD_MAX} step={QUIET_THRESHOLD_STEP} testId="quiet-threshold" />
+      )}
+
+      <ToggleRow
+        active={stayFilters.enabled}
+        icon={<BedDouble className="size-4" />}
+        label="Places to stay"
+        tooltip="Bookable hotels and apartments with live prices and noise levels"
+        onClick={() => onStayChange({ ...stayFilters, enabled: !stayFilters.enabled })}
+      />
+      {stayFilters.enabled && (
+        <div className="flex gap-1 ml-7 mt-0.5 mb-1">
+          {STAY_TYPES.map(({ value, label }) => (
+            <button
+              key={value}
+              data-testid={`stay-type-${value}`}
+              onClick={() => onStayChange({ ...stayFilters, stayType: value })}
+              className={`px-2 py-0.5 rounded-full text-[11px] cursor-pointer transition-colors ${
+                stayFilters.stayType === value
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-black/10'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       )}
 
       {/* Properties (real estate) HIDDEN before launch (owner 2026-07-15): the data

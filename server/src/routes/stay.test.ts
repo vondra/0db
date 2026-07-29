@@ -5,22 +5,25 @@ import { stayRoutes, snap, pickPrecision, slim } from './stay.js'
 
 test('snap keeps grid-boundary values in place', () => {
   // Regression: floor(50.05/0.05) is 1000.999… without the epsilon, snapping
-  // a whole cell too far and doubling the requested box.
+  // a whole cell too far and doubling the requested box (grid is 0.01 now,
+  // same failure class).
   assert.equal(snap(50.05, false), '50.05')
   assert.equal(snap(50.05, true), '50.05')
-  assert.equal(snap(50.063, false), '50.05')
-  assert.equal(snap(50.063, true), '50.10')
-  assert.equal(snap(-0.02, false), '-0.05')
-  assert.equal(snap(-0.02, true), '0.00')
+  assert.equal(snap(50.063, false), '50.06')
+  assert.equal(snap(50.063, true), '50.07')
+  assert.equal(snap(-0.025, false), '-0.03')
+  assert.equal(snap(-0.025, true), '-0.02')
 })
 
-test('pickPrecision fits the H3 grid to one page', () => {
-  // Central-Prague-sized box (~40 km²): r8 → 54 cells ≤ 100.
+test('pickPrecision fits the H3 grid to the page budget', () => {
+  // Central-Prague-sized box (~40 km²): r9 would need ~380 cells, r8 fits (54).
   assert.equal(pickPrecision(50.05, 14.35, 50.10, 14.45), 8)
-  // City-overview box (~700 km²): r7 would need 131 cells, r6 fits.
-  assert.equal(pickPrecision(50.0, 14.2, 50.25, 14.55), 6)
+  // City-overview box (~700 km²): r7 → ~136 cells ≤ 300-cell budget.
+  assert.equal(pickPrecision(50.0, 14.2, 50.25, 14.55), 7)
   // Tiny box: finest configured resolution wins.
   assert.equal(pickPrecision(50.05, 14.35, 50.055, 14.355), 10)
+  // Largest allowed box at the equator: r3 keeps it under budget.
+  assert.equal(pickPrecision(-6, 0, 6, 12), 3)
 })
 
 const SAMPLE = {
@@ -87,12 +90,42 @@ test('GET /api/stay validates the bbox before any upstream call', async (t) => {
   for (const qs of [
     'swlat=x&swlng=14&nelat=51&nelng=15',            // non-numeric
     'swlat=51&swlng=14&nelat=50&nelng=15',           // inverted
-    'swlat=50&swlng=14&nelat=51.6&nelng=15',         // span over cap
+    'swlat=50&swlng=14&nelat=63&nelng=15',           // span over cap
   ]) {
     const response = await app.inject(`/api/stay?${qs}`)
     assert.equal(response.statusCode, 400, qs)
   }
   assert.equal(fetchMock.mock.callCount(), 0)
+})
+
+test('GET /api/stay pages through a dense flat-mode bucket', async (t) => {
+  const mk = (i: number) => ({
+    ...SAMPLE,
+    id: `h${i}`,
+    location: { coordinates: { lat: 48.21 + i * 1e-4, lng: 17.21 } },
+  })
+  const pages = [
+    { results: Array.from({ length: 100 }, (_, i) => mk(i)), meta: { total: 150 } },
+    { results: Array.from({ length: 50 }, (_, i) => mk(100 + i)), meta: { total: 150 } },
+  ]
+  const urls: string[] = []
+  const fetchMock = mock.method(globalThis, 'fetch', async (url: any) => {
+    urls.push(String(url))
+    return new Response(JSON.stringify(pages[urls.length - 1]), { status: 200 })
+  })
+  t.after(() => fetchMock.mock.restore())
+
+  const app = Fastify()
+  await app.register(stayRoutes)
+  t.after(async () => app.close())
+
+  // Snapped span 0.02 deg — street scale, so flat mode with pagination.
+  const response = await app.inject('/api/stay?swlat=48.20&swlng=17.20&nelat=48.22&nelng=17.22')
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.json().listings.length, 150)
+  assert.equal(urls.length, 2)
+  assert.ok(!urls[0].includes('cluster='), 'flat mode must not cluster')
+  assert.ok(urls[1].includes('page=2'))
 })
 
 test('GET /api/stay serves the second hit from cache', async (t) => {
