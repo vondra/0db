@@ -25,6 +25,9 @@ fetch_one() {
     local tile="$1"
     local out="$PARQUET_DIR/$tile.parquet"
     [ -s "$out" ] && return 0
+    # An INGESTED tile's parquet is deliberately deleted (space hygiene) —
+    # never re-download spent tiles.
+    [ -n "${INGESTED_LIST:-}" ] && grep -qx "$tile" "$INGESTED_LIST" 2>/dev/null && return 0
     # N50E014 → bbox 14,50,15,51 (lon_min,lat_min,lon_max,lat_max)
     local ns="${tile:0:1}" lat="${tile:1:2}" ew="${tile:3:1}" lon="${tile:4:3}"
     lat=$((10#$lat)); lon=$((10#$lon))
@@ -44,6 +47,9 @@ fetch_one() {
 }
 export -f fetch_one
 export PARQUET_DIR
+INGESTED_LIST="$(pwd)/data/enrichment/global/overture-obstacles/.ingested-tiles"
+[ -f "$INGESTED_LIST" ] || INGESTED_LIST=""
+export INGESTED_LIST
 
 ls "$RASTER_CENSUS"/*.raw | sed 's/.*\///; s/\.raw$//' | sort > /tmp/overture-world-tiles.txt
 total=$(wc -l < /tmp/overture-world-tiles.txt)
