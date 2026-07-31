@@ -432,10 +432,15 @@ pub fn enclosure_db(set: &ObstacleSet, lat: f64, lon: f64, radius_m: f64) -> f64
 
 /// Read `QM_VECTOR_BUILDINGS` once per process. Loaders (tile-painter,
 /// source-reader) call this at init and thread the bool — kernels never read
-/// the environment. OFF is the production default until the Wave-1 cutover.
+/// the environment. ON by default since the Wave-1 cutover (2026-07-31:
+/// world obstacle store complete — 13 694 tiles / 67 272 cells; A/B record
+/// in geodata-v2-plan.md §1.9, m25_j17 +12.9 dB overshoot → −0.26 dB vs
+/// Defra); `QM_VECTOR_BUILDINGS=0` restores the raster path (A/B,
+/// bisection). Regions without staged obstacle cells keep the raster path
+/// via the loaders' all-or-raster policy, unchanged.
 pub fn vector_buildings_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("QM_VECTOR_BUILDINGS").is_ok_and(|v| v == "1"))
+    *ENABLED.get_or_init(|| !std::env::var("QM_VECTOR_BUILDINGS").is_ok_and(|v| v == "0"))
 }
 
 /// [`RasterSampler`] wrapper that swaps ONLY the receiver reflection probe
