@@ -110,7 +110,7 @@ function PillGroup({ options, value, onChange, testId }: {
           type="button"
           onClick={() => onChange(v)}
           aria-pressed={value === v}
-          className={`rounded-md border px-1.5 py-0.5 text-[11px] cursor-pointer transition-colors ${
+          className={`rounded-md border px-1 py-0.5 text-[11px] tracking-tight cursor-pointer transition-colors ${
             value === v
               ? 'border-foreground bg-foreground text-background'
               : 'border-border bg-background text-muted-foreground hover:bg-black/5'
@@ -191,7 +191,7 @@ function StayFilterBlock({ filters, onChange }: { filters: StayFilters; onChange
 
       <span className="text-muted-foreground">Stars</span>
       <PillGroup testId="stay-stars" value={filters.minStars}
-        options={[{ v: null, label: 'Any' }, { v: 3, label: '3+' }, { v: 4, label: '4+' }, { v: 5, label: '5★' }]}
+        options={[{ v: null, label: 'Any' }, { v: 3, label: '★★★' }, { v: 4, label: '★★★★' }, { v: 5, label: '★★★★★' }]}
         onChange={(v) => onChange({ ...filters, minStars: v })} />
 
       <span className="text-muted-foreground">Rating</span>
