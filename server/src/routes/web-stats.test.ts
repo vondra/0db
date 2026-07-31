@@ -9,7 +9,7 @@ import { readStatsSummary } from './web-stats-data.js'
 import { buildInsights } from './web-stats-insights.js'
 import { describeAgent, scanLogLines } from './web-stats-live.js'
 
-const SITE = '0db.app'
+const SITE = 'quietmap.org'
 
 function makeTempDb(): { path: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'web-stats-test-'))

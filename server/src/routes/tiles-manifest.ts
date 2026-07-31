@@ -15,8 +15,8 @@ const TILES_MANIFEST_VALIDATION_CACHE_MS = 10_000
  * tiles, bytes}}}`. The packer's fields pass through verbatim — the manifest is the single
  * source of truth and reshaping it here would fork that truth (the shared boot-readiness
  * validator below rejects a torn, malformed, or semantically invalid manifest with a 500).
- * ONE deployment field is added on top: `tile_base` (env PUBLIC_TILE_BASE, e.g.
- * https://t.0db.app) tells the frontend which HOSTNAME serves the tiles — that is serving
+ * ONE deployment field is added on top: `tile_base` (env PUBLIC_TILE_BASE) tells
+ * the frontend which HOSTNAME serves the tiles — that is serving
  * topology, which the packer can't know and which must be changeable per checkout/host
  * without a frontend rebuild. Absent env = null = same-origin (devex, localhost, canaries).
  * `no-cache` so the frontend's 10-minute re-poll revalidates instead of pinning an old

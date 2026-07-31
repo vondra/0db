@@ -206,8 +206,8 @@ export function aggregateAccessRecord(
   }
 
   day.requests += 1
-  // t.0db.app is proxied through Cloudflare, so client_ip there is the CF
-  // edge (geo-labeled e.g. "SE"), not the visitor — CF forwards the real
+  // the tile vhost is CDN-proxied, so client_ip there is the CDN edge
+  // (geo-labeled e.g. "SE"), not the visitor — the CDN forwards the real
   // address in Cf-Connecting-Ip. Direct vhosts send no such header.
   const ip = firstHeader(request.headers, 'Cf-Connecting-Ip')
     || request.client_ip || request.remote_ip || ''

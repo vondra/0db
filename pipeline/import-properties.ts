@@ -100,7 +100,7 @@ async function fetchBezrealitkyPage(
 ): Promise<{ adverts: BrAdvert[]; images: Map<string, string>; total: number }> {
   const url = `https://www.bezrealitky.com/search?currency=CZK&estateType=${estateType}&offerType=${offerType}&page=${page}`
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) 0db.app/1.0 noise-map' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) quietmap.org/1.0 noise-map' },
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const html = await res.text()

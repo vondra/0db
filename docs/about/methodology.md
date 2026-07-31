@@ -14,7 +14,7 @@ The map computes environmental noise in three steps:
 
 3. **You see the result** — the map shows noise at every ~12-meter raster cell, colored from pale at the quiet end through yellow and orange to red and deep purple (very loud, 80+ dB). Each source layer is independent — toggle them to see roads alone, railways alone, or everything combined.
 
-![0db.app — noise visualization](map-overview.jpg)
+![quietmap.org — noise visualization](map-overview.jpg)
 
 ---
 

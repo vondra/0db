@@ -142,10 +142,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
     } else {
       // Internal admin area under the /a/ prefix — cluster now (→ /a/cluster +
       // /a/api/cluster/status), other admins later. TWO layers of access control, because
-      // it surfaces box IPs, telemetry, and $ costs: Caddy basic_auth on dev.0db.app/a/*
-      // (the password), AND requireLocalPeer here so a DIRECT hit on the public :8520 port
-      // (bypassing Caddy — the box has no firewall) can't reach it. Caddy proxies from
-      // loopback so authed public requests + the local TUI pass; the public map stays open.
+      // it surfaces box IPs, telemetry, and $ costs: an authenticating reverse proxy in
+      // front (the password), AND requireLocalPeer here so a direct, proxy-bypassing
+      // connection can't reach it either. The proxy connects from loopback, so authed
+      // requests + the local TUI pass; the public map stays open.
       // NOTE the prefix must match cluster-page.ts's poll URL and scripts/cluster-dash.py.
       await app.register(async (adminApp) => {
         adminApp.addHook('onRequest', requireLocalPeer)

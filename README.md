@@ -7,7 +7,7 @@ breakdowns. The acoustic model follows CNOSSOS-EU for surface sources with
 ISO 9613-2 propagation and a Doc 29-inspired aircraft NPD; formulas, constants
 and intentional simplifications are specified in `engine/noise-compute/SPEC.md`.
 
-Live instance: <https://0db.app>
+Live instance: <https://quietmap.org>
 
 ## Repository map
 
@@ -90,4 +90,4 @@ a separate private repository.
 ## License & contact
 
 See `docs/about/credits.md` for data-source attribution (OSM, GLO-30, SRTM,
-Overture, WorldCover, IMD, ADS-B) and terms. hello@0db.app.
+Overture, WorldCover, IMD, ADS-B) and terms. hello@quietmap.org.

@@ -161,9 +161,9 @@ export async function heatmapPmtilesRoutes(app: FastifyInstance): Promise<void> 
     // Bodies are already Brotli (served with Content-Encoding: br) — opt out of
     // @fastify/compress so it doesn't re-compress incompressible bytes.
     // CORS on EVERY response (hits, misses, errors): tiles are also served
-    // cross-origin from the dedicated tile hostname (t.0db.app — own DNS so
-    // caching rules and future servers stay separate from the app/API), while
-    // the page itself lives on dev.0db.app / 0db.app. Tiles are public,
+    // cross-origin from a dedicated tile hostname (own DNS so caching rules and
+    // future servers stay separate from the app/API), while the page itself is
+    // served from other origins. Tiles are public,
     // immutable, cookie-less bytes — `*` is the correct scope.
     {
       compress: false,

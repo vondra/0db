@@ -161,7 +161,7 @@ function MapApp() {
 
   // Tab/share title tracks the open popup: reverse-geocode the position
   // (place-level, server-cached) and compose "Dejvice, Praha - 62 dB -
-  // 0db.app" — place first, never the number (owner spec 2026-07-10).
+  // quietmap.org" — place first, never the number (owner spec 2026-07-10).
   const [detailPlaceName, setDetailPlaceName] = useState<string | null>(null)
   useEffect(() => {
     // Clear synchronously so a moved popup never shows the previous place
@@ -490,7 +490,7 @@ function MapApp() {
         href="/about"
         className="hidden md:block fixed bottom-2 right-2 z-[1003] rounded-md border border-black/5 bg-white/95 px-2 py-0.5 text-xs text-muted-foreground shadow-lg backdrop-blur-md hover:text-foreground"
       >
-        About 0db.app
+        About quietmap.org
       </a>
 
       <MobileDetailSheet

@@ -10,7 +10,7 @@ export const NOT_FOUND_PAGE_HTML = `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
-<title>404 — It's quiet here · 0db.app</title>
+<title>404 — It's quiet here · quietmap.org</title>
 <style>
   :root { color-scheme: light; }
   * { margin: 0; box-sizing: border-box; }
@@ -48,7 +48,7 @@ export const NOT_FOUND_PAGE_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <img src="/favicon.svg" alt="0db.app logo" width="88" height="88" />
+  <img src="/favicon.svg" alt="quietmap.org logo" width="88" height="88" />
   <h1>It's quiet here. <em>Too quiet.</em></h1>
   <p class="sub">This address doesn't exist — which makes it the quietest
   spot on the whole map.</p>
@@ -58,7 +58,7 @@ export const NOT_FOUND_PAGE_HTML = `<!doctype html>
     <div class="scale"><span class="you">0 dB · you are here</span><span>80+ dB</span></div>
   </div>
   <a class="home" href="/">← Back to the map</a>
-  <p class="foot">404 · 0db.app — Find your quiet place</p>
+  <p class="foot">404 · quietmap.org — Find your quiet place</p>
 </main>
 </body>
 </html>

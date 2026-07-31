@@ -8,7 +8,7 @@
 import { readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-const BASE_URL = 'https://0db.app'
+const BASE_URL = 'https://quietmap.org'
 const FRONTEND_ROOT = resolve(import.meta.dirname, '..')
 const DOCS_ABOUT_DIR = resolve(FRONTEND_ROOT, '../docs/about')
 

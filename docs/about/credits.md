@@ -24,25 +24,25 @@ nav: hidden
 
 The map, tiles and API are provided as a **service**, free to use and embed with attribution:
 
-- **You may** link to 0db.app, embed the map or screenshots in your articles, apps and projects — with a visible attribution "**0db.app**" linking back here, plus "© OpenStreetMap contributors" (our models build on OpenStreetMap and other open data).
+- **You may** link to quietmap.org, embed the map or screenshots in your articles, apps and projects — with a visible attribution "**quietmap.org**" linking back here, plus "© OpenStreetMap contributors" (our models build on OpenStreetMap and other open data).
 - **You may not** bulk-download tiles, scrape or mirror the dataset, or republish a copy of the map as your own service.
-- **Commercial or high-volume use** (resale, white-label, heavy API traffic): [contact us](mailto:hello@0db.app) — we're friendly.
+- **Commercial or high-volume use** (resale, white-label, heavy API traffic): [contact us](mailto:hello@quietmap.org) — we're friendly.
 
 Raw model data is not distributed. Noise values are model estimates (CNOSSOS-EU / ISO 9613-2 based), not measurements — see the [methodology](/about/methodology) for accuracy and limitations.
 
-**No warranty.** 0db.app is offered as-is, for information and orientation — please don't rely on it alone for legal, health, safety, or property decisions.
+**No warranty.** quietmap.org is offered as-is, for information and orientation — please don't rely on it alone for legal, health, safety, or property decisions.
 
 **Affiliate disclosure.** Some links we may add in future (property, stays, travel) can be affiliate links that earn us a small commission at no extra cost to you. They never influence the noise numbers — the map is computed identically for everyone.
 
 <details>
 <summary><strong>Privacy</strong></summary>
 
-0db.app uses **no cookies, no trackers, no analytics scripts** — which is why there is no consent banner to click away.
+quietmap.org uses **no cookies, no trackers, no analytics scripts** — which is why there is no consent banner to click away.
 
 Like almost every website, our server keeps a standard technical **access log** (IP address, browser, and requested URLs — including map coordinates you click) for security and operations — the legal basis is legitimate interest (GDPR art. 6(1)(f)). Logs rotate automatically and are kept at most **30 days**, then deleted. From these logs we derive **anonymous, aggregated statistics** (visitor countries, browser types, popular map areas) — never profiles of individual visitors, and nothing is shared with third parties.
 
 To open the map in your part of the world, the first view is approximated to **country level** from your IP address using an offline GeoIP database running on our own server ([IP Geolocation by DB-IP](https://db-ip.com)). The lookup happens in memory, the result is not stored, and your IP is never sent to any third party for this. Precise location is used only if you tap the locate button, via your browser's standard permission prompt.
 
-Questions or requests: [hello@0db.app](mailto:hello@0db.app).
+Questions or requests: [hello@quietmap.org](mailto:hello@quietmap.org).
 
 </details>

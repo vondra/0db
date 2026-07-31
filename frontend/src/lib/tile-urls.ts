@@ -42,7 +42,7 @@ const MANIFEST_POLL_MS = 10 * 60 * 1000
 export interface TileBuilds {
   latest: string
   byLayer: Record<string, string>
-  /** Tile hostname prefix (manifest `tile_base`, e.g. "https://t.0db.app") —
+  /** Tile hostname prefix (manifest `tile_base`) —
    *  '' = same-origin. Deployment topology, delivered with the manifest so a
    *  serving move never needs a frontend rebuild. */
   base: string

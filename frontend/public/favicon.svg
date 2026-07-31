@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="0db.app">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="quietmap.org">
   <!-- Organic blob (deliberately irregular, not a regular polygon) filled with
        a true radial gradient built from the SAME stops as the map's heatmap
        ramp (frontend/src/lib/heatmap-palette.ts) — quiet (white, "0 dB") at
        the center where the 0 sits, escalating outward through the palette to
-       loud at the edge. The logo is 0db.app's own idea in miniature: a quiet
+       loud at the edge. The logo is quietmap.org's own idea in miniature: a quiet
        center found amid rising noise, not a source radiating outward. -->
   <defs>
     <radialGradient id="g" cx="32" cy="32" r="30" gradientUnits="userSpaceOnUse">

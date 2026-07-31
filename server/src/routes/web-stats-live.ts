@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises'
 import { Reader, type CityResponse } from 'mmdb-lib'
 import { DEFAULT_GEOIP_DB_PATH } from './initial-view.js'
 
-const ACCESS_LOG_PATH = '/var/log/caddy/0db.app.access.log'
+const ACCESS_LOG_PATH = '/var/log/caddy/quietmap.org.access.log'
 const LIVE_TAIL_BYTES = 1 << 20
 const WINDOW_TAIL_BYTES = 8 << 20
 const ONLINE_WINDOW_MS = 5 * 60_000

@@ -31,7 +31,7 @@ const NETWORK = 'dublin-sonitus'
 const API = 'https://data.smartdublin.ie/sonitus-api'
 const SITE_MONITORS = 'https://dublincityairandnoise.ie/assets/php/get-monitors.php'
 const CRED = 'username=dublincityapi&password=Xpa5vAQ9ki'
-const UA = { 'User-Agent': '0db.app/1.0 (noise atlas; contact: info@0db.app)' }
+const UA = { 'User-Agent': 'quietmap.org/1.0 (noise atlas; contact: info@quietmap.org)' }
 const WINDOW_DAYS = 28 // hard server cap, verified by binary search
 const MIN_MONTHS = 9
 const MIN_PERIOD_COVERAGE = 0.7

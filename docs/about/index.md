@@ -1,5 +1,5 @@
 ---
-title: 0db.app
+title: quietmap.org
 intro: Find your quiet place. A world atlas of environmental noise — roads, railways, aircraft, and industry.
 map: { center: [15, 30], zoom: 2 }
 ---
@@ -8,13 +8,13 @@ map: { center: [15, 30], zoom: 2 }
 
 **Make noise visible. Make quiet possible.**
 
-0db.app shows how loud the world really is — and helps you find the quiet.
+quietmap.org shows how loud the world really is — and helps you find the quiet.
 
 1. **Find quiet places** — search any address, explore the map, discover where to live, work, or relax without noise
 2. **Understand noise** — see which sources contribute (roads, railways, aircraft, industry) and how terrain, buildings, and forests reduce it
 3. **Track change over time** — regular updates make noise measurable, so communities and governments can see whether things are getting quieter
 
-Human-made noise is not the same as natural sound. A forest at 50 dB with birdsong feels quiet. A road at 50 dB with traffic feels loud. 0db.app measures environmental noise from human sources — transport, industry, and urban activity — not nature.
+Human-made noise is not the same as natural sound. A forest at 50 dB with birdsong feels quiet. A road at 50 dB with traffic feels loud. quietmap.org measures environmental noise from human sources — transport, industry, and urban activity — not nature.
 
 ## How the map works
 
@@ -26,7 +26,7 @@ Three steps:
 
 Each of the five source layers — roads, railways, aircraft, industrial, buildings — is modelled independently and toggles on its own in the map.
 
-![0db.app — noise visualization](map-overview.jpg)
+![quietmap.org — noise visualization](map-overview.jpg)
 
 → **[Read the full methodology](/about/methodology)** — per-layer emission standards (CNOSSOS-EU, Doc 29, IEC 61400-11), the propagation physics, where the model simplifies vs the standards, and the ongoing accuracy validation against real measurement stations.
 
@@ -133,7 +133,7 @@ Computed — a physics model (CNOSSOS-EU emission, ISO 9613-2 propagation) over 
 It's an engineering estimate, not a certificate. The target is a mean error under 3 dB against official strategic noise maps for road noise, and every confirmed gap against a real measurement station becomes a fix. For a single address, read the value as "around X dB" — and click the point to see exactly what the number is built from.
 
 **Why does my quiet street show 50 dB?**
-Click it. Most surprises have a visible cause: a road with no measured traffic falls back to class defaults, a nearby factory is classified by registry sector, or the dominant source is something you've tuned out. If the inputs are genuinely wrong for your street, [tell us](mailto:hello@0db.app) — reports with an address are how the map gets better.
+Click it. Most surprises have a visible cause: a road with no measured traffic falls back to class defaults, a nearby factory is classified by registry sector, or the dominant source is something you've tuned out. If the inputs are genuinely wrong for your street, [tell us](mailto:hello@quietmap.org) — reports with an address are how the map gets better.
 
 **Why are there no low-flying aircraft where I live?**
 The aircraft layer sees what volunteer ADS-B receivers see. Where no feeder is nearby, low-altitude flights aren't received and only high-altitude cruise noise (~20 dB) appears — a limit of the data source, not the model. Hosting a receiver in a blank spot fixes it for everyone.
@@ -142,11 +142,11 @@ The aircraft layer sees what volunteer ADS-B receivers see. Where no feeder is n
 By design: the [color scheme](#color-scale) marks under 30 dB as "no color" — genuinely quiet. To hunt for the quietest places, use the Quiet zones overlay, which shades everything under a threshold you pick (20–45 dB).
 
 **Can I use screenshots or embed the map?**
-Yes, free, with visible "0db.app" attribution — details in [credits & terms](/about/credits).
+Yes, free, with visible "quietmap.org" attribution — details in [credits & terms](/about/credits).
 
 ## Help us make it better
 
-**See something wrong on your street?** Write to [hello@0db.app](mailto:hello@0db.app) with the address. Every confirmed report feeds the validation loop — real-world corrections are the most valuable data we get.
+**See something wrong on your street?** Write to [hello@quietmap.org](mailto:hello@quietmap.org) with the address. Every confirmed report feeds the validation loop — real-world corrections are the most valuable data we get.
 
 **Have data? We're looking for** (in order of impact):
 
@@ -157,25 +157,25 @@ Yes, free, with visible "0db.app" attribution — details in [credits & terms](/
 5. **Better national data for any country** — traffic censuses, facility registries, turbine inventories.
 6. **Shipping** — vessel traffic and port operations, for a future marine layer.
 
-If you work somewhere that has this data — or know who does — [we'd love to talk](mailto:hello@0db.app).
+If you work somewhere that has this data — or know who does — [we'd love to talk](mailto:hello@quietmap.org).
 
 ## Who builds this
 
-0db.app is built by one person working with three AI coding agents: **Claude** as lead developer, **Codex** as second developer and code reviewer, and **Gemini** for an independent second opinion and review — with promising open-source models tried along the way as they appear. Development started in June 2025 on Opus 4; every major Opus, GPT, and Gemini release since has been tried on this codebase — progress accelerated markedly with [OpenClaw](https://openclaw.ai/) and Opus 4.6, and it's kept getting better since.
+quietmap.org is built by one person working with three AI coding agents: **Claude** as lead developer, **Codex** as second developer and code reviewer, and **Gemini** for an independent second opinion and review — with promising open-source models tried along the way as they appear. Development started in June 2025 on Opus 4; every major Opus, GPT, and Gemini release since has been tried on this codebase — progress accelerated markedly with [OpenClaw](https://openclaw.ai/) and Opus 4.6, and it's kept getting better since.
 
 Some of it was built while hiking the forests of La Palma — changes discussed with the models over Telegram through OpenClaw, on a mobile signal that kept cutting out. It worked surprisingly well. Fitting, for a map about quiet.
 
-0db.app is an internal project of [Miton](https://www.miton.cz/en/).
+quietmap.org is an internal project of [Miton](https://www.miton.cz/en/).
 
 The code will be open-sourced once the repository is cleaned up for public release. The computations themselves are already transparent and reproducible from public data.
 
 ## Credits & terms
 
-0db.app builds on the open geodata ecosystem — OpenStreetMap, Copernicus, ESA WorldCover, ADS-B community feeds, and more — and is free to use and embed with attribution, no cookies or trackers.
+quietmap.org builds on the open geodata ecosystem — OpenStreetMap, Copernicus, ESA WorldCover, ADS-B community feeds, and more — and is free to use and embed with attribution, no cookies or trackers.
 
 → **[Data credits, usage terms & privacy](/about/credits)**
 
 ## Contact & status
 
-- **Email:** [hello@0db.app](mailto:hello@0db.app)
-- **Service status:** [status.0db.app](https://status.0db.app) — live uptime of the map and tiles
+- **Email:** [hello@quietmap.org](mailto:hello@quietmap.org)
+- **Service status:** [status.quietmap.org](https://status.quietmap.org) — live uptime of the map and tiles

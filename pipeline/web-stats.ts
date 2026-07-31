@@ -5,7 +5,7 @@
  * IP never leaves memory — it feeds only the GeoIP lookup and the HLL
  * visitor sketch (see lib/web-stats-aggregates.ts for the privacy contract).
  *
- * Usage:  npx tsx web-stats.ts [site ...]        (default site: 0db.app)
+ * Usage:  npx tsx web-stats.ts [site ...]        (default site: quietmap.org)
  * Logs:   /var/log/caddy/{site}.access.log       (current file only)
  *
  * Incrementality: data/web-stats-state.json keeps {inode, offset} per log;
@@ -322,7 +322,7 @@ function printAndSnapshotSite(db: DatabaseSync, site: string): object | null {
 
 function main(): void {
   const sites = process.argv.slice(2)
-  const siteList = sites.length > 0 ? sites : ['0db.app']
+  const siteList = sites.length > 0 ? sites : ['quietmap.org']
   for (const site of siteList) {
     if (!/^[a-z0-9.-]+$/i.test(site)) {
       console.error(`invalid site name '${site}' — refusing to build a log path from it`)

@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { resolve } from 'node:path'
 import { REPO_ROOT } from '../runtime-paths.js'
 
-export const WEB_STATS_SITE = '0db.app'
+export const WEB_STATS_SITE = 'quietmap.org'
 
 /** Resolved per call (never at import) so tests and ops can point WEB_STATS_DB
  *  at another file — including a missing one — without a process restart. */

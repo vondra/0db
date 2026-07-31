@@ -155,10 +155,10 @@ function AboutBody({ doc }: { doc: DocData }) {
  *  defeats source-grepping harvesters (the mailbot + Resend filtering handle
  *  whatever gets through anyway). */
 function PageFooter() {
-  const contact = ['info', '0db.app'].join('@')
+  const contact = ['info', 'quietmap.org'].join('@')
   return (
     <div className="mt-12 flex items-center justify-between border-t border-border pt-6 text-sm text-muted-foreground/60">
-      <a href="https://0db.app" className="hover:underline">0db.app</a>
+      <a href="https://quietmap.org" className="hover:underline">quietmap.org</a>
       <a
         href="#contact"
         onClick={(e) => { e.preventDefault(); window.location.href = `mailto:${contact}` }}
@@ -182,8 +182,8 @@ export default function AboutPage() {
       .then(res => { if (!res.ok) throw new Error(`${res.status}`); return res.json() })
       .then((data: DocData) => {
         setDoc(data)
-        // Root About = "About - 0db.app"; subpages carry their own title
-        // ("Czechia - 0db.app"). /about is a full page load, no restore needed.
+        // Root About = "About - quietmap.org"; subpages carry their own title
+        // ("Czechia - quietmap.org"). /about is a full page load, no restore needed.
         setDocumentTitle([data.breadcrumb.length > 1 ? data.title : 'About'])
       })
       .catch(err => setError(err.message))

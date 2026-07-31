@@ -27,7 +27,7 @@ if (!Number.isInteger(YEAR) || YEAR < 2015 || YEAR > 2100) {
 }
 const BASE = 'https://opendata.bruitparif.fr/data/rumeur'
 const SUFFIX = 'lang=fr&host=rumeur.bruitparif.fr'
-const UA = { 'User-Agent': '0db.app/1.0 (noise atlas; contact: info@0db.app)' }
+const UA = { 'User-Agent': 'quietmap.org/1.0 (noise atlas; contact: info@quietmap.org)' }
 /** Rule-1 gate: server `weight` (0-1 completeness) below this → skipped
  *  (a 9-of-12-month year ≈ 0.75). */
 const MIN_WEIGHT = 0.75

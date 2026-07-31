@@ -87,7 +87,7 @@ function capCache<V extends { expires: number }>(map: Map<string, V>, cap: numbe
 /** Shared Photon call — one UA + timeout for /api/search and /api/reverse. */
 function fetchPhoton(url: URL): Promise<Response> {
   return fetch(url.toString(), {
-    headers: { 'User-Agent': '0db.app/1.0 (noise atlas; contact: info@0db.app)' },
+    headers: { 'User-Agent': 'quietmap.org/1.0 (noise atlas; contact: info@quietmap.org)' },
     signal: AbortSignal.timeout(3000),
   })
 }
@@ -150,7 +150,7 @@ export async function searchRoutes(app: FastifyInstance) {
   })
 
   // Reverse geocode for the tab/share title — place-first titles like
-  // "Dejvice, Praha - 62 dB - 0db.app" (owner spec 2026-07-10). Same Photon
+  // "Dejvice, Praha - 62 dB - quietmap.org" (owner spec 2026-07-10). Same Photon
   // instance and etiquette as /api/search; ~100 m server-side cache.
   app.get<{ Querystring: { lat?: string; lon?: string } }>('/api/reverse', {
     config: { rateLimit: EXPENSIVE_ROUTE_RATE_LIMIT },
