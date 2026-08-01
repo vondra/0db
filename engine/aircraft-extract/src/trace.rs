@@ -196,7 +196,7 @@ pub fn read_day_traces_filtered(
 
 /// Decompressed-byte budget for the typecode prefix probe. The readsb
 /// `trace_full` header carries `"t":"<typecode>"` at byte ~32 when
-/// present (verified on `/mnt/data/adsb/2025`); 512 leaves slack for
+/// present (verified on the real 2025 release tree); 512 leaves slack for
 /// long `desc` / `ownOp` fields ahead of it while staying orders of
 /// magnitude below a full trace's decompressed size.
 const TYPECODE_PROBE_DECOMPRESSED_BYTES: usize = 512;
@@ -634,16 +634,18 @@ mod tests {
 
     /// Smoke test against real cached data when available — proves the
     /// parser handles the actual adsb.lol layout, not just synthetic
-    /// fixtures. Skipped when the cache is missing.
+    /// fixtures. Skips unless QM_FLIGHTS_CACHE points at a radius cache root
+    /// with the year-nested 2025/2025-01-21 day dir.
     #[test]
     fn smoke_real_praha_cache() {
-        let day = Path::new(
-            "/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km/2025/2025-01-21",
-        );
+        let Ok(root) = std::env::var("QM_FLIGHTS_CACHE") else {
+            return;
+        };
+        let day = Path::new(&root).join("2025/2025-01-21");
         if !day.exists() {
             return;
         }
-        let traces = read_day_traces(day).unwrap();
+        let traces = read_day_traces(&day).unwrap();
         assert!(traces.len() > 100, "got only {} traces", traces.len());
         let total_pts: usize = traces.iter().map(|t| t.points.len()).sum();
         assert!(total_pts > 50_000, "got only {total_pts} pts");

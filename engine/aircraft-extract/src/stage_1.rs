@@ -474,11 +474,22 @@ mod tests {
         assert!(!stage_1_one_flight(&mk(""), &rasters, 0).is_empty());
     }
 
+    /// Skips unless QM_FLIGHTS_CACHE (radius cache with 2025/2025-01-21) and
+    /// QM_PREPARED_DIR (the prepared data root, cf. PREPARED_DIR in
+    /// scripts/run-aircraft-extract.sh) are both set and present.
     #[test]
     fn end_to_end_one_day_against_real_dem() {
-        let cache = "/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km";
-        let prepared = "/0db.app/v4.0-wt2/data/prepared";
-        if !std::path::Path::new(cache).exists() || !std::path::Path::new(prepared).exists() {
+        let (Ok(cache), Ok(prepared)) = (
+            std::env::var("QM_FLIGHTS_CACHE"),
+            std::env::var("QM_PREPARED_DIR"),
+        ) else {
+            return;
+        };
+        if !std::path::Path::new(&cache)
+            .join("2025/2025-01-21")
+            .exists()
+            || !std::path::Path::new(&prepared).exists()
+        {
             return;
         }
 
@@ -491,7 +502,7 @@ mod tests {
         let sources: Vec<Box<dyn FlightSource>> = vec![Box::new(AdsbTarSource::new(cache))];
         crate::stage_0::run_stage_0(&sources, "2025-01-21", &stage0_dir).unwrap();
 
-        let rasters = RealRasters::new(std::path::Path::new(prepared));
+        let rasters = RealRasters::new(std::path::Path::new(&prepared));
         let n = run_stage_1(&stage0_dir, &stage1_dir, "2025-01-21", &rasters).unwrap();
         assert!(n > 1000, "got only {n} segments");
         let path = stage1_dir.join("2025-01-21.arrow");

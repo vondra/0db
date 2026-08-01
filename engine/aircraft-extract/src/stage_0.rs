@@ -89,10 +89,14 @@ mod tests {
     use crate::source_adsb_tar::AdsbTarSource;
     use tempfile::tempdir;
 
+    /// Skips unless QM_FLIGHTS_CACHE points at a radius cache root containing
+    /// 2025/2025-01-21 (the same cache as ADSB_CACHE in scripts/run-aircraft-extract.sh).
     #[test]
     fn run_stage_0_smoke_against_praha_cache() {
-        let root = "/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km";
-        if !std::path::Path::new(root).exists() {
+        let Ok(root) = std::env::var("QM_FLIGHTS_CACHE") else {
+            return;
+        };
+        if !std::path::Path::new(&root).join("2025/2025-01-21").exists() {
             return;
         }
         let out = tempdir().unwrap();

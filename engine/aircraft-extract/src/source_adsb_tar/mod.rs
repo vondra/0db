@@ -96,10 +96,9 @@ impl AdsbTarSource {
     }
 
     /// Preferred layout: `<root>/<year>/<day>/` (the full ADS-B
-    /// archive at `/mnt/data/adsb-archive/`). Second candidate: the
-    /// raw adsb.lol release naming
+    /// archive). Second candidate: the raw adsb.lol release naming
     /// `<root>/<year>/v{YYYY.MM.DD}-planes-readsb-prod-0/` as
-    /// downloaded to `/mnt/data/adsb/2025/` — reading it in place
+    /// downloaded in the release tree — reading it in place
     /// keeps the 1.1 TB archive pristine, no symlink farm
     /// (`ga-365d-hybrid-plan.md` §4.1; the per-day `.ok` markers are
     /// ignored by the tar-extension filter). The `…prod-0tmp` suffix

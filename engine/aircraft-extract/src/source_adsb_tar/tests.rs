@@ -27,7 +27,7 @@ fn day_dir_flat_fallback_when_year_layer_absent() {
     assert_eq!(s.day_dir("2025-07-17"), flat);
 }
 
-/// Raw adsb.lol release naming (`/mnt/data/adsb/2025/` layout,
+/// Raw adsb.lol release naming (`<archive-root>/<year>/` layout,
 /// `ga-365d-hybrid-plan.md` §4.1) resolves as the second candidate;
 /// the plain year-nested form keeps precedence when both exist.
 /// The `…prod-0tmp` upstream tag variant (15 real days in 2025-05/06)
@@ -180,10 +180,14 @@ fn non_ga_pass_keeps_gse_routing() {
     assert_eq!(flights[0].veh_kind, 1);
 }
 
+/// Skips unless QM_FLIGHTS_CACHE points at a radius cache root containing
+/// 2025/2025-01-21 (the same cache as ADSB_CACHE in scripts/run-aircraft-extract.sh).
 #[test]
 fn smoke_real_praha_day() {
-    let root = "/0db.app/v4.0-wt2/data/source/flights-cache/radius/praha-150km";
-    if !std::path::Path::new(root).exists() {
+    let Ok(root) = std::env::var("QM_FLIGHTS_CACHE") else {
+        return;
+    };
+    if !std::path::Path::new(&root).join("2025/2025-01-21").exists() {
         return;
     }
     let s = AdsbTarSource::new(root);
