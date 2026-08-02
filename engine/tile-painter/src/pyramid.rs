@@ -246,6 +246,17 @@ fn build_pyramid_managing_fence(
     after_level: &mut dyn FnMut(u8) -> Result<()>,
 ) -> Result<usize> {
     validate_zoom_range(base_zoom, dst_zoom)?;
+    // The base level must exist even when the level range is EMPTY
+    // (dst == base, the zoom-tier no-op): the per-level "requires source"
+    // check never runs then, and a silent success over a missing store would
+    // hide a broken tier root (gg barrier-fix review).
+    let base_path = layer_dir.join(format!("z{base_zoom}.qtsi"));
+    if !base_path.exists() {
+        anyhow::bail!(
+            "pyramid requires base z{base_zoom}, but {} is missing",
+            base_path.display()
+        );
+    }
     if !matches!(scope, RebuildScope::Full) {
         require_incremental_pyramid_levels(layer_dir, base_zoom, dst_zoom)?;
     }
@@ -571,14 +582,34 @@ mod tests {
         );
     }
 
+    /// `dst_zoom == base_zoom` is a legal NO-OP (a zoom-tier root has no
+    /// pyramid below its own zoom, city-z13 plan §A): with the base present
+    /// nothing is written and nothing errors; a missing base still fails via
+    /// the source-level requirement, exactly like any Full rebuild.
+    #[test]
+    fn equal_base_and_dst_zoom_is_a_noop_with_base_present_and_fails_without() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = TileStore::create(dir.path(), 13, SOURCE_ID_ROAD, TILE_PX as u16).unwrap();
+        let cells = vec![quantise_lden(60.0); TILE_PX * TILE_PX];
+        base.put_cells_hm3(4424, 2774, &cells).unwrap();
+        base.sync_all().unwrap();
+        drop(base);
+        let written = build_pyramid(dir.path(), 13, 13, RebuildScope::Full).unwrap();
+        assert_eq!(written, 0, "no levels below the tier zoom to build");
+
+        let missing = tempfile::tempdir().unwrap();
+        assert!(
+            build_pyramid(missing.path(), 13, 13, RebuildScope::Full).is_err(),
+            "a missing base store must still fail loudly at equality"
+        );
+    }
+
     #[test]
     fn full_rebuild_fails_when_a_required_source_level_is_missing() {
         let dir = tempfile::tempdir().unwrap();
         let error = build_pyramid(dir.path(), 6, 2, RebuildScope::Full).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("full pyramid requires source z6"),
+            error.to_string().contains("requires base z6"),
             "unexpected error: {error:#}"
         );
     }

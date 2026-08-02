@@ -10,7 +10,7 @@
 //!   `hex_store::query_barriers_from_batches` semantics (midpoint + height,
 //!   default 3.0) so popup and heatmap screen the identical wall set.
 //! * The GPU runner takes the SAME vector form behind the `QM_GPU_BARRIERS`
-//!   gate (default OFF): the per-tile [`BarrierData::for_tile`] slice is uploaded
+//!   gate (engine default ON since 2026-08-02): the per-tile [`BarrierData::for_tile`] slice is uploaded
 //!   and the scatter kernel screens it with the identical projection-and-snap
 //!   (`line_source` in scatter.cu). The raster burn was the rejected alternative —
 //!   it failed the W2 gate (3.7–13.8 dB under-screening in wall shadow;
