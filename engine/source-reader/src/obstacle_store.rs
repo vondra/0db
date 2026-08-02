@@ -539,9 +539,13 @@ pub fn footprints_in_bbox(
         };
         let buildings_arrow = h3r4_dir.map(|h| h.join(cell.to_string()).join("buildings.arrow"));
         let low_profile = LowProfileLookup::load(buildings_arrow.as_deref());
-        let Ok(shards) = shard_paths(&dir) else { continue };
+        let Ok(shards) = shard_paths(&dir) else {
+            continue;
+        };
         for path in shards {
-            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
             let Ok(reader) = FileReader::try_new(Cursor::new(bytes), None) else {
                 continue;
             };
@@ -572,7 +576,10 @@ pub fn footprints_in_bbox(
                         continue;
                     }
                     let (clat, clon) = (clats.value(i), clons.value(i));
-                    if clat < south - pad || clat > north + pad || clon < west - pad || clon > east + pad
+                    if clat < south - pad
+                        || clat > north + pad
+                        || clon < west - pad
+                        || clon > east + pad
                     {
                         continue;
                     }
