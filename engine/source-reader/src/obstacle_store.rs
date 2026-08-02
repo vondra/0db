@@ -379,116 +379,6 @@ fn build_cell_index(
     Ok(builder.build())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Runs only where the Praha obstacle staging exists (dev boxes after the
-    /// geodata-v2 night-1 ingest); hermetic CI skips silently. Asserts the
-    /// REAL scale (the gg review flagged a >10k assertion as hiding it) and
-    /// that the second load is a cache hit, not a rebuild.
-    #[test]
-    fn loads_praha_set_and_caches_cells() {
-        let data_dir = Path::new("../../data/prepared");
-        let staged = data_dir
-            .parent()
-            .map(|d| d.join("enrichment/global/overture-obstacles/h3r4"))
-            .is_some_and(|d| d.is_dir());
-        if !staged {
-            return;
-        }
-        std::env::set_var("QM_OBSTACLES_ALLOW_PARTIAL", "1");
-        let t0 = std::time::Instant::now();
-        let Some(set) = load_obstacle_set(None, data_dir, 50.08, 14.43) else {
-            std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
-            return; // cell not ingested on this box — skip
-        };
-        let cold = t0.elapsed();
-        assert!(
-            set.edge_count() > 100_000,
-            "central Praha must index >100k edges, got {}",
-            set.edge_count()
-        );
-        let mut out = Vec::new();
-        set.crossings(50.08, 14.43, 50.095, 14.45, &mut out);
-        assert!(
-            !out.is_empty(),
-            "a 2 km central-Praha ray must cross footprints"
-        );
-        assert!(out.windows(2).all(|w| w[0].t <= w[1].t));
-
-        let t1 = std::time::Instant::now();
-        let set2 = load_obstacle_set(None, data_dir, 50.08, 14.43).expect("cached reload");
-        let warm = t1.elapsed();
-        assert_eq!(set2.edge_count(), set.edge_count());
-        assert!(
-            warm < cold / 5,
-            "second load must be a cache hit: cold {cold:?}, warm {warm:?}"
-        );
-        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
-    }
-
-    /// Strict default: a missing ring cell aborts to the raster path; the
-    /// dev override admits the partial disk.
-    #[test]
-    fn missing_ring_cell_falls_back_unless_partial_allowed() {
-        let tmp = std::env::temp_dir().join(format!("qm-obst-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        let cell = LatLng::new(50.08, 14.43).unwrap().to_cell(Resolution::Four);
-        let dir = tmp.join(cell.to_string());
-        std::fs::create_dir_all(&dir).unwrap();
-        // One tiny valid shard: a single closed square footprint (~20 m), WKB
-        // little-endian Polygon with 1 ring × 5 points.
-        let schema = arrow::datatypes::Schema::new(vec![
-            arrow::datatypes::Field::new("polygon_wkb", arrow::datatypes::DataType::Binary, false),
-            arrow::datatypes::Field::new("height_m", arrow::datatypes::DataType::Float32, false),
-        ]);
-        let mut wkb: Vec<u8> = vec![1, 3, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0];
-        for (lon, lat) in [
-            (14.4300, 50.0800),
-            (14.4303, 50.0800),
-            (14.4303, 50.0802),
-            (14.4300, 50.0802),
-            (14.4300, 50.0800),
-        ] {
-            wkb.extend_from_slice(&f64::to_le_bytes(lon));
-            wkb.extend_from_slice(&f64::to_le_bytes(lat));
-        }
-        let batch = arrow::record_batch::RecordBatch::try_new(
-            Arc::new(schema.clone()),
-            vec![
-                Arc::new(BinaryArray::from_vec(vec![&wkb])),
-                Arc::new(Float32Array::from(vec![9.0_f32])),
-            ],
-        )
-        .unwrap();
-        let file = std::fs::File::create(dir.join("obstacles-TEST.arrow")).unwrap();
-        let mut w = arrow::ipc::writer::FileWriter::try_new(file, &schema).unwrap();
-        w.write(&batch).unwrap();
-        w.finish().unwrap();
-
-        std::env::set_var("QM_OBSTACLES_DIR", tmp.to_str().unwrap());
-        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
-        let strict = load_obstacle_set(None, Path::new("/nonexistent"), 50.08, 14.43);
-        assert!(
-            strict.is_none(),
-            "missing ring cells must fall back to raster"
-        );
-
-        std::env::set_var("QM_OBSTACLES_ALLOW_PARTIAL", "1");
-        let partial = load_obstacle_set(None, Path::new("/nonexistent"), 50.08, 14.43);
-        assert!(
-            partial.is_some(),
-            "dev override must admit the partial disk"
-        );
-        assert_eq!(partial.unwrap().edge_count(), 4);
-
-        std::env::remove_var("QM_OBSTACLES_DIR");
-        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-}
-
 /// One footprint as the MODEL uses it (display twin of `build_cell_index`):
 /// the outer ring in lat/lon plus the AS-USED height — after the low-profile
 /// cap — its ingest tier, and whether the cap fired. Feeds the
@@ -607,4 +497,114 @@ pub fn footprints_in_bbox(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs only where the Praha obstacle staging exists (dev boxes after the
+    /// geodata-v2 night-1 ingest); hermetic CI skips silently. Asserts the
+    /// REAL scale (the gg review flagged a >10k assertion as hiding it) and
+    /// that the second load is a cache hit, not a rebuild.
+    #[test]
+    fn loads_praha_set_and_caches_cells() {
+        let data_dir = Path::new("../../data/prepared");
+        let staged = data_dir
+            .parent()
+            .map(|d| d.join("enrichment/global/overture-obstacles/h3r4"))
+            .is_some_and(|d| d.is_dir());
+        if !staged {
+            return;
+        }
+        std::env::set_var("QM_OBSTACLES_ALLOW_PARTIAL", "1");
+        let t0 = std::time::Instant::now();
+        let Some(set) = load_obstacle_set(None, data_dir, 50.08, 14.43) else {
+            std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
+            return; // cell not ingested on this box — skip
+        };
+        let cold = t0.elapsed();
+        assert!(
+            set.edge_count() > 100_000,
+            "central Praha must index >100k edges, got {}",
+            set.edge_count()
+        );
+        let mut out = Vec::new();
+        set.crossings(50.08, 14.43, 50.095, 14.45, &mut out);
+        assert!(
+            !out.is_empty(),
+            "a 2 km central-Praha ray must cross footprints"
+        );
+        assert!(out.windows(2).all(|w| w[0].t <= w[1].t));
+
+        let t1 = std::time::Instant::now();
+        let set2 = load_obstacle_set(None, data_dir, 50.08, 14.43).expect("cached reload");
+        let warm = t1.elapsed();
+        assert_eq!(set2.edge_count(), set.edge_count());
+        assert!(
+            warm < cold / 5,
+            "second load must be a cache hit: cold {cold:?}, warm {warm:?}"
+        );
+        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
+    }
+
+    /// Strict default: a missing ring cell aborts to the raster path; the
+    /// dev override admits the partial disk.
+    #[test]
+    fn missing_ring_cell_falls_back_unless_partial_allowed() {
+        let tmp = std::env::temp_dir().join(format!("qm-obst-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let cell = LatLng::new(50.08, 14.43).unwrap().to_cell(Resolution::Four);
+        let dir = tmp.join(cell.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        // One tiny valid shard: a single closed square footprint (~20 m), WKB
+        // little-endian Polygon with 1 ring × 5 points.
+        let schema = arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new("polygon_wkb", arrow::datatypes::DataType::Binary, false),
+            arrow::datatypes::Field::new("height_m", arrow::datatypes::DataType::Float32, false),
+        ]);
+        let mut wkb: Vec<u8> = vec![1, 3, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0];
+        for (lon, lat) in [
+            (14.4300, 50.0800),
+            (14.4303, 50.0800),
+            (14.4303, 50.0802),
+            (14.4300, 50.0802),
+            (14.4300, 50.0800),
+        ] {
+            wkb.extend_from_slice(&f64::to_le_bytes(lon));
+            wkb.extend_from_slice(&f64::to_le_bytes(lat));
+        }
+        let batch = arrow::record_batch::RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![
+                Arc::new(BinaryArray::from_vec(vec![&wkb])),
+                Arc::new(Float32Array::from(vec![9.0_f32])),
+            ],
+        )
+        .unwrap();
+        let file = std::fs::File::create(dir.join("obstacles-TEST.arrow")).unwrap();
+        let mut w = arrow::ipc::writer::FileWriter::try_new(file, &schema).unwrap();
+        w.write(&batch).unwrap();
+        w.finish().unwrap();
+
+        std::env::set_var("QM_OBSTACLES_DIR", tmp.to_str().unwrap());
+        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
+        let strict = load_obstacle_set(None, Path::new("/nonexistent"), 50.08, 14.43);
+        assert!(
+            strict.is_none(),
+            "missing ring cells must fall back to raster"
+        );
+
+        std::env::set_var("QM_OBSTACLES_ALLOW_PARTIAL", "1");
+        let partial = load_obstacle_set(None, Path::new("/nonexistent"), 50.08, 14.43);
+        assert!(
+            partial.is_some(),
+            "dev override must admit the partial disk"
+        );
+        assert_eq!(partial.unwrap().edge_count(), 4);
+
+        std::env::remove_var("QM_OBSTACLES_DIR");
+        std::env::remove_var("QM_OBSTACLES_ALLOW_PARTIAL");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
