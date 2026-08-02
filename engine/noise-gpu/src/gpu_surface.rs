@@ -241,18 +241,17 @@ struct Cfg {
     h3r4: PathBuf,
     baseline: String,
     output: Option<String>,
-    /// `QM_GPU_BARRIERS=1` — upload each region's `barriers.arrow` walls so the
+    /// `QM_GPU_BARRIERS` — upload each region's `barriers.arrow` walls so the
     /// kernel screens them on the GPU (the vector projection-and-snap in
     /// `line_source`; mean 0.002 / max 1.5 dB vs the CPU vector path).
-    /// PRODUCTION runs this ON: the cluster (cluster-build-chunk.sh) forces
-    /// `QM_GPU_BARRIERS=1` (owner-directed 2026-06-13), so every GPU surface build
-    /// screens its own barriers and the C9 CPU-routing gate is a no-op. The
-    /// BINARY's own env default is OFF (a bare `gpu-surface` is barrier-blind:
-    /// every tile packs an empty slice, `nbarr == 0`, the kernel barrier loop
-    /// no-ops, byte-identical to the barrier-blind lane) — that OFF baseline is
-    /// the reference `tests/barrier_screening.rs` compares ON against. So:
-    /// cluster default ON, bare-binary default OFF. See the spike record
-    /// (.claude/plans/heatmap-orchestrator-audit/).
+    /// Default ON since 2026-08-02 IN THE ENGINE ITSELF (owner directive
+    /// 2026-06-13: every GPU surface build screens its own barriers). It used
+    /// to be a wrapper-supplied env (v1 cluster-build-chunk.sh forced =1) and
+    /// the v2 orchestrator rewrite silently lost it — every fleet GPU
+    /// road/rail paint ran wall-blind until Voznice exposed it. `=0` remains
+    /// the explicit barrier-blind baseline (what
+    /// `tests/barrier_screening.rs` compares ON against, via the programmatic
+    /// flag). See the spike record (.claude/plans/heatmap-orchestrator-audit/).
     barriers_enabled: bool,
 }
 
@@ -739,7 +738,15 @@ fn run_stream(
 ) -> Result<()> {
     use std::collections::VecDeque;
     use std::sync::{Condvar, Mutex};
-    let barriers_enabled = env("QM_GPU_BARRIERS", "0") == "1";
+    // Default ON (owner directive 2026-06-13: "every GPU surface build screens
+    // its own barriers"). The v1 cluster wrapper (cluster-build-chunk.sh) used
+    // to force =1; the v2 orchestrator rewrite lost that env and every fleet
+    // GPU road/rail paint since ran WALL-BLIND — caught 2026-08-02 at Voznice
+    // (D4 walls in barriers.arrow, absent from the tiles). A recurring ops
+    // failure gets a code invariant: the engine itself now defaults ON;
+    // QM_GPU_BARRIERS=0 remains the explicit baseline lever (the
+    // barrier_screening tests pass the flag programmatically either way).
+    let barriers_enabled = env("QM_GPU_BARRIERS", "1") == "1";
     if barriers_enabled {
         eprintln!("QM_GPU_BARRIERS=1 — kernel vector-barrier screening ENABLED");
     }
@@ -1195,7 +1202,15 @@ fn main() -> Result<()> {
 
     // OFF by default: no production change until per-box-validated. When set, the
     // C9 gate routes barrier-bearing chunks here instead of demoting them to CPU.
-    let barriers_enabled = env("QM_GPU_BARRIERS", "0") == "1";
+    // Default ON (owner directive 2026-06-13: "every GPU surface build screens
+    // its own barriers"). The v1 cluster wrapper (cluster-build-chunk.sh) used
+    // to force =1; the v2 orchestrator rewrite lost that env and every fleet
+    // GPU road/rail paint since ran WALL-BLIND — caught 2026-08-02 at Voznice
+    // (D4 walls in barriers.arrow, absent from the tiles). A recurring ops
+    // failure gets a code invariant: the engine itself now defaults ON;
+    // QM_GPU_BARRIERS=0 remains the explicit baseline lever (the
+    // barrier_screening tests pass the flag programmatically either way).
+    let barriers_enabled = env("QM_GPU_BARRIERS", "1") == "1";
     if barriers_enabled {
         eprintln!("QM_GPU_BARRIERS=1 — kernel vector-barrier screening ENABLED");
     }
