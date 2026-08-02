@@ -256,6 +256,73 @@ function getBarriersInBbox(south: number, north: number, west: number, east: num
   return result
 }
 
+/// One obstacle footprint from the popup worker's store — the wire shape of
+/// sourceModule.queryObstacleFootprints (o = outer ring [[lat,lon]…],
+/// h = AS-USED height in m after the low-profile cap, t = ingest tier,
+/// c = capped).
+type FootprintRow = { o: [number, number][]; h: number; t: number; c: boolean }
+
+/// The building-height overlay as MODEL TRUTH (owner ask 2026-08-02): fill
+/// the exact obstacle-store footprints the propagation engine screens with,
+/// colored by their as-used height (buildingColor ramp — the same scale the
+/// raster view used), with capped footprints rendered at their capped
+/// height. Even-odd scanline fill on the 256 px tile grid.
+export async function renderBuildingVectorTile(
+  z: number,
+  x: number,
+  y: number,
+  fetchFootprintsJson: (south: number, west: number, north: number, east: number) => Promise<string>,
+): Promise<Buffer> {
+  const { latNorth, latSouth, lonWest, lonEast } = tileToLatLonBbox(z, x, y)
+  let rows: FootprintRow[]
+  try {
+    rows = JSON.parse(await fetchFootprintsJson(latSouth, lonWest, latNorth, lonEast)) as FootprintRow[]
+  } catch {
+    return getEmptyPng() // debug overlay: an engine hiccup renders empty, never 500s the tile
+  }
+  if (!rows.length) return getEmptyPng()
+
+  const W = 256
+  const pixels = Buffer.alloc(W * W * 4)
+  const mercYNorth = Math.log(Math.tan(Math.PI / 4 + (latNorth * Math.PI) / 360))
+  const mercYSouth = Math.log(Math.tan(Math.PI / 4 + (latSouth * Math.PI) / 360))
+  const toPx = (lat: number, lon: number): [number, number] => {
+    const mercY = Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))
+    return [
+      ((lon - lonWest) / (lonEast - lonWest)) * W,
+      ((mercY - mercYNorth) / (mercYSouth - mercYNorth)) * W,
+    ]
+  }
+
+  for (const f of rows) {
+    if (f.o.length < 3) continue
+    const ring = f.o.map(([la, lo]) => toPx(la, lo))
+    const [r, g, b] = buildingColor(f.h)
+    // Even-odd scanline fill over the ring's pixel bbox (clamped to tile).
+    let yMin = Infinity, yMax = -Infinity
+    for (const [, py] of ring) { yMin = Math.min(yMin, py); yMax = Math.max(yMax, py) }
+    const y0 = Math.max(0, Math.floor(yMin)), y1 = Math.min(W - 1, Math.ceil(yMax))
+    for (let sy = y0; sy <= y1; sy++) {
+      const cy = sy + 0.5
+      const xs: number[] = []
+      for (let i = 0; i < ring.length; i++) {
+        const [ax, ay] = ring[i]
+        const [bx, by] = ring[(i + 1) % ring.length]
+        if ((ay > cy) !== (by > cy)) xs.push(ax + ((cy - ay) / (by - ay)) * (bx - ax))
+      }
+      xs.sort((p, q) => p - q)
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const x0 = Math.max(0, Math.round(xs[k])), x1c = Math.min(W - 1, Math.round(xs[k + 1]))
+        for (let sx = x0; sx <= x1c; sx++) {
+          const idx = (sy * W + sx) * 4
+          pixels[idx] = r; pixels[idx + 1] = g; pixels[idx + 2] = b; pixels[idx + 3] = 210
+        }
+      }
+    }
+  }
+  return encodePNG(W, W, pixels)
+}
+
 async function renderBarrierTile(z: number, x: number, y: number): Promise<Buffer> {
   if (!barrierSegments) await preloadBarriers()
   const { latNorth, latSouth, lonWest, lonEast } = tileToLatLonBbox(z, x, y)

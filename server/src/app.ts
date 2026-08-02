@@ -101,12 +101,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   // Registered directly because the readiness probe is a capability returned
   // by the live supervisor instance; Fastify plugin registration discards a
   // plugin's return value.
-  const engineProbe = await noiseOnflyV2Routes(app)
+  const engine = await noiseOnflyV2Routes(app)
+  const engineProbe = engine.checkReady
   await app.register(isochronRoutes)
   await app.register(docsRoutes)
   await app.register(propertiesRoutes)
   await app.register(stayRoutes)
-  await app.register(rasterTileRoutes, { preloadRuntimeData: opts.preloadRuntimeData ?? false })
+  await app.register(rasterTileRoutes, {
+    preloadRuntimeData: opts.preloadRuntimeData ?? false,
+    queryObstacleFootprints: engine.queryObstacleFootprints,
+  })
   await app.register(aircraftRoutes)
   // Heatmap tiles: immutable pmtiles builds addressed by build-id, discovered
   // via the manifest (storage redesign 2026-07). The loose-file route is gone

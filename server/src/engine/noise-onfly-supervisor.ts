@@ -7,10 +7,10 @@ export type NoiseOnflyWorkerReply = {
   error?: string
 }
 
-export type NoiseOnflyOp = 'point' | 'unfiltered' | 'ready'
+export type NoiseOnflyOp = 'point' | 'unfiltered' | 'ready' | 'footprints'
 
 export interface NoiseOnflyWorker {
-  postMessage(message: { id: number; lat: number; lng: number; op?: NoiseOnflyOp }): void
+  postMessage(message: { id: number; lat: number; lng: number; lat2?: number; lng2?: number; op?: NoiseOnflyOp }): void
   terminate(): Promise<number>
   on(event: 'message', listener: (message: NoiseOnflyWorkerReply) => void): this
   on(event: 'error', listener: (err: Error) => void): this
@@ -45,6 +45,9 @@ type RequestEntry = {
   id: number
   lat: number
   lng: number
+  /** bbox ops ('footprints'): north-east corner; lat/lng carry south-west. */
+  lat2?: number
+  lng2?: number
   op: NoiseOnflyOp
   resolve: (resultJson: string) => void
   reject: (err: Error) => void
@@ -156,6 +159,14 @@ export class NoiseOnflySupervisor {
     return this.enqueue(lat, lng, 'unfiltered', signal)
   }
 
+  /** Obstacle footprints (as-used heights) in a bbox — the building-height
+   *  debug overlay's data source; lat/lng = south-west, lat2/lng2 = north-east. */
+  async queryObstacleFootprints(
+    south: number, west: number, north: number, east: number, signal?: AbortSignal,
+  ): Promise<string> {
+    return this.enqueue(south, west, 'footprints', signal, north, east)
+  }
+
   /**
    * Spawn one real pool worker and verify that it loaded the N-API addon and
    * completed sourceInit. The worker deliberately does not query a point, so
@@ -168,7 +179,7 @@ export class NoiseOnflySupervisor {
     }
   }
 
-  private async enqueue(lat: number, lng: number, op: NoiseOnflyOp, signal?: AbortSignal): Promise<string> {
+  private async enqueue(lat: number, lng: number, op: NoiseOnflyOp, signal?: AbortSignal, lat2?: number, lng2?: number): Promise<string> {
     if (this.closed) {
       throw unavailableError('noise-onfly supervisor is shutting down')
     }
@@ -185,6 +196,8 @@ export class NoiseOnflySupervisor {
         id: this.nextRequestId++,
         lat,
         lng,
+        lat2,
+        lng2,
         op,
         resolve,
         reject,
@@ -300,7 +313,7 @@ export class NoiseOnflySupervisor {
     })
 
     try {
-      worker.postMessage({ id: entry.id, lat: entry.lat, lng: entry.lng, op: entry.op })
+      worker.postMessage({ id: entry.id, lat: entry.lat, lng: entry.lng, lat2: entry.lat2, lng2: entry.lng2, op: entry.op })
     } catch (error) {
       this.finishActiveSlot(slot, entry)
       this.rejectClient(entry, unavailableError(`noise-onfly dispatch failed: ${toError(error).message}`))

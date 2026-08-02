@@ -48,7 +48,7 @@ if (existsSync(h3r4Dir)) {
   console.log(`noise-onfly-worker: ${msg}`)
 }
 
-parentPort?.on('message', ({ id, lat, lng, op }) => {
+parentPort?.on('message', ({ id, lat, lng, lat2, lng2, op }) => {
   try {
     if (op === 'ready') {
       // Re-run the idempotent init so a worker created during a transient data
@@ -62,6 +62,12 @@ parentPort?.on('message', ({ id, lat, lng, op }) => {
         throw new Error(`invalid readiness reference row count: ${referenceRows}`)
       }
       parentPort?.postMessage({ id, ok: true, resultJson: '{"ready":true}' })
+      return
+    }
+    if (op === 'footprints') {
+      // bbox: lat/lng = south-west, lat2/lng2 = north-east (supervisor contract).
+      const resultJson = sourceModule.queryObstacleFootprints(lat, lng, lat2, lng2)
+      parentPort?.postMessage({ id, ok: true, resultJson })
       return
     }
     const fn = op === 'unfiltered'

@@ -248,6 +248,39 @@ pub fn query_buildings(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<St
 
 #[cfg(feature = "node")]
 #[napi]
+/// Obstacle footprints intersecting a bbox with their AS-USED heights (after
+/// the low-profile cap) — the building-height debug overlay's data source,
+/// so the map shows exactly what the propagation model screens with. JSON:
+/// [{o: [[lat,lon]…], h, t, c}] (o = outer ring, h = height m, t = ingest
+/// tier 0 mapped/1 floors/2 default, c = low-profile-capped).
+pub fn query_obstacle_footprints(
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+) -> napi::Result<String> {
+    let h3r4 = H3R4_DIR.get().map(|p| p.as_path());
+    let data_dir = DATA_DIR
+        .get()
+        .map(|p| p.as_path())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let fps = obstacle_store::footprints_in_bbox(h3r4, data_dir, south, west, north, east);
+    let rows: Vec<serde_json::Value> = fps
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "o": f.outer.iter().map(|(la, lo)| [la, lo]).collect::<Vec<_>>(),
+                "h": f.height_m,
+                "t": f.tier,
+                "c": f.capped,
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string(&rows).unwrap())
+}
+
+#[cfg(feature = "node")]
+#[napi]
 pub fn query_barriers(lat: f64, lng: f64, max_radius_m: f64) -> napi::Result<String> {
     let hex_ids = geo::grid_disk_r4(lat, lng);
     ensure_hexes_parallel(&hex_ids);

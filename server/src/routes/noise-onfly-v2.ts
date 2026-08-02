@@ -30,7 +30,12 @@ const NOISE_ONFLY_MAX_QUEUE = Number(process.env.NOISE_ONFLY_MAX_QUEUE || '8')
 // override per box with NOISE_ONFLY_POOL_SIZE.
 const NOISE_ONFLY_POOL_SIZE = Number(process.env.NOISE_ONFLY_POOL_SIZE || '8')
 
-export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<() => Promise<void>> {
+export type NoiseOnflyEngine = {
+  checkReady: () => Promise<void>
+  queryObstacleFootprints: (south: number, west: number, north: number, east: number) => Promise<string>
+}
+
+export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<NoiseOnflyEngine> {
   const supervisor = new NoiseOnflySupervisor({
     createWorker: () => {
       // Cheap when current, and self-heals if an operator removed the stable
@@ -120,5 +125,12 @@ export async function noiseOnflyV2Routes(app: FastifyInstance): Promise<() => Pr
     }
   )
 
-  return async () => supervisor.checkReady()
+  return {
+    checkReady: async () => supervisor.checkReady(),
+    // The building-height debug overlay's data source (raster-tiles.ts) —
+    // exact footprints + as-used heights straight from the popup worker's
+    // obstacle store.
+    queryObstacleFootprints: (south: number, west: number, north: number, east: number) =>
+      supervisor.queryObstacleFootprints(south, west, north, east),
+  }
 }

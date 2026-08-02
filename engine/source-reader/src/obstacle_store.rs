@@ -488,3 +488,116 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+
+/// One footprint as the MODEL uses it (display twin of `build_cell_index`):
+/// the outer ring in lat/lon plus the AS-USED height — after the low-profile
+/// cap — its ingest tier, and whether the cap fired. Feeds the
+/// building-height debug overlay so the map shows exactly what the
+/// propagation engine screens with (owner ask 2026-08-02).
+pub struct FootprintView {
+    /// (lat, lon) outer-ring vertices (closed or open as stored).
+    pub outer: Vec<(f64, f64)>,
+    pub height_m: f32,
+    pub tier: u8,
+    pub capped: bool,
+}
+
+/// Footprints intersecting the bbox (by centroid, padded one bucket) with
+/// as-used heights. Cells resolved exactly like a query: the res-4 cells of
+/// the bbox corners/centre plus their ring, deduped; missing cells simply
+/// contribute nothing (a debug overlay must render whatever exists, never
+/// fail closed like the physics loader).
+pub fn footprints_in_bbox(
+    h3r4_dir: Option<&Path>,
+    data_dir: &Path,
+    south: f64,
+    west: f64,
+    north: f64,
+    east: f64,
+) -> Vec<FootprintView> {
+    let mut cells: Vec<CellIndex> = Vec::new();
+    for (la, lo) in [
+        (south, west),
+        (south, east),
+        (north, west),
+        (north, east),
+        ((south + north) / 2.0, (west + east) / 2.0),
+    ] {
+        if let Ok(ll) = LatLng::new(la, lo) {
+            for c in ll.to_cell(Resolution::Four).grid_disk::<Vec<_>>(1) {
+                if !cells.contains(&c) {
+                    cells.push(c);
+                }
+            }
+        }
+    }
+    let pad = 0.01;
+    let mut out = Vec::new();
+    for cell in cells {
+        let Ok(Some(dir)) = cell_dir(h3r4_dir, data_dir, cell) else {
+            continue;
+        };
+        let buildings_arrow = h3r4_dir.map(|h| h.join(cell.to_string()).join("buildings.arrow"));
+        let low_profile = LowProfileLookup::load(buildings_arrow.as_deref());
+        let Ok(shards) = shard_paths(&dir) else { continue };
+        for path in shards {
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(reader) = FileReader::try_new(Cursor::new(bytes), None) else {
+                continue;
+            };
+            for batch in reader {
+                let Ok(batch) = batch else { continue };
+                let (Some(wkb), Some(heights), Some(clats), Some(clons)) = (
+                    batch
+                        .column_by_name("polygon_wkb")
+                        .and_then(|c| c.as_any().downcast_ref::<BinaryArray>()),
+                    batch
+                        .column_by_name("height_m")
+                        .and_then(|c| c.as_any().downcast_ref::<Float32Array>()),
+                    batch
+                        .column_by_name("centroid_lat")
+                        .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                    batch
+                        .column_by_name("centroid_lon")
+                        .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                ) else {
+                    continue;
+                };
+                let tiers = batch
+                    .column_by_name("height_tier")
+                    .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+                for i in 0..batch.num_rows() {
+                    if wkb.is_null(i) || heights.is_null(i) || clats.is_null(i) || clons.is_null(i)
+                    {
+                        continue;
+                    }
+                    let (clat, clon) = (clats.value(i), clons.value(i));
+                    if clat < south - pad || clat > north + pad || clon < west - pad || clon > east + pad
+                    {
+                        continue;
+                    }
+                    let raw = heights.value(i);
+                    let tier = tiers.map(|t| t.value(i)).unwrap_or(0);
+                    let height = low_profile.capped_height(
+                        raw,
+                        tier,
+                        clat,
+                        clon,
+                        outer_ring_area_m2(wkb.value(i)),
+                    );
+                    for (outer, _holes) in
+                        noise_compute::wkb::parse_wkb_polygons_bytes(wkb.value(i))
+                    {
+                        out.push(FootprintView {
+                            outer: outer.clone(),
+                            height_m: height,
+                            tier,
+                            capped: height < raw,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}

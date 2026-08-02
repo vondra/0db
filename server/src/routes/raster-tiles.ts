@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { renderTile, renderDataTile, getEmptyPng, preloadBarriers } from '../engine/raster-tile-renderer.js'
+import { renderTile, renderDataTile, renderBuildingVectorTile, getEmptyPng, preloadBarriers } from '../engine/raster-tile-renderer.js'
 
 const VALID_LAYERS = new Set(['dem', 'building', 'forest', 'barriers'])
 const VALID_DATA_LAYERS = new Set(['dem', 'building', 'forest'])
@@ -43,7 +43,13 @@ function parseTileParams(
   return { layer, z, x, y }
 }
 
-export type RasterTileRouteOptions = { preloadRuntimeData?: boolean }
+export type RasterTileRouteOptions = {
+  preloadRuntimeData?: boolean
+  /** Popup-engine footprint provider — when present, the `building` layer
+   *  renders MODEL-TRUTH vector footprints (as-used heights incl. the
+   *  low-profile cap) instead of the legacy 30 m raster. */
+  queryObstacleFootprints?: (south: number, west: number, north: number, east: number) => Promise<string>
+}
 
 export async function rasterTileRoutes(
   app: FastifyInstance,
@@ -60,16 +66,21 @@ export async function rasterTileRoutes(
       if (typeof parsed === 'string') return reply.code(400).send(parsed)
       const { layer, z, x, y } = parsed
 
-      const cacheKey = `${layer}/${z}/${x}/${y}`
+      const vectorBuildings = layer === 'building' && options.queryObstacleFootprints
+      const cacheKey = `${vectorBuildings ? 'building-vec' : layer}/${z}/${x}/${y}`
       reply.header('Content-Type', 'image/png')
-      reply.header('Cache-Control', 'public, max-age=86400')
+      // Model-truth footprints change with the obstacle store + cap logic —
+      // cache them shorter than the static rasters.
+      reply.header('Cache-Control', vectorBuildings ? 'public, max-age=3600' : 'public, max-age=86400')
 
       const cached = lruGet(pngCache, cacheKey)
       if (cached !== undefined) return cached
 
       let png: Buffer
       try {
-        png = await renderTile(layer as 'dem' | 'building' | 'forest', z, x, y)
+        png = vectorBuildings
+          ? await renderBuildingVectorTile(z, x, y, options.queryObstacleFootprints!)
+          : await renderTile(layer as 'dem' | 'building' | 'forest', z, x, y)
       } catch {
         png = getEmptyPng()
       }
