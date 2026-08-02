@@ -205,8 +205,12 @@ pub fn build_pyramid_with_existing_rebuild_fence(
 }
 
 fn validate_zoom_range(base_zoom: u8, dst_zoom: u8) -> Result<()> {
-    if base_zoom <= dst_zoom {
-        anyhow::bail!("base_zoom {} must be > dst_zoom {}", base_zoom, dst_zoom);
+    // Equality is a legitimate NO-OP, not an error: a zoom-tier root builds
+    // its total at the tier's own zoom and has no pyramid below it
+    // (city-z13 plan §A — combine runs with --dst-zoom == the tier zoom).
+    // build_pyramid_levels over an empty level range writes nothing.
+    if base_zoom < dst_zoom {
+        anyhow::bail!("base_zoom {} must be >= dst_zoom {}", base_zoom, dst_zoom);
     }
     Ok(())
 }
