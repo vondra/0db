@@ -118,7 +118,7 @@
       "group": "line",
       "gpu": true,
       "binary": "gpu-surface",
-      "flags": "--stream --layers road,rail --output {OUTPUT}"
+      "flags": "--stream --layers road,rail --zoom {ZOOM} --output {OUTPUT}"
     },
     "cpu-line": {
       "group": "line",
@@ -184,13 +184,13 @@
       "group": "road",
       "gpu": true,
       "binary": "gpu-surface",
-      "flags": "--stream --layers road --output {OUTPUT}"
+      "flags": "--stream --layers road --zoom {ZOOM} --output {OUTPUT}"
     },
     "gpu-rail": {
       "group": "rail",
       "gpu": true,
       "binary": "gpu-surface",
-      "flags": "--stream --layers rail --output {OUTPUT}"
+      "flags": "--stream --layers rail --zoom {ZOOM} --output {OUTPUT}"
     }
   }
 }

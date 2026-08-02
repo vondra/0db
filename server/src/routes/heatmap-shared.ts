@@ -34,18 +34,38 @@ export interface TileParams {
 }
 
 /**
+ * Zoom-tier layer token `{base}-z{tier}-p{N}` (city-z13 plan §D): a tier pack's
+ * archive served as an ordinary layer whose only legal zoom is the tier's own.
+ * Mirrors the Rust packer's `parse_tier_token` — keep the two in lockstep.
+ */
+export function parseTierToken(
+  layer: string,
+): { base: string; tier: number; pack: string } | null {
+  const m = /^([a-z][a-z-]*[a-z])-z(1[3-8])-(p[0-9]+)$/.exec(layer)
+  if (!m) return null
+  if (!ALLOWED_LAYERS.has(m[1])) return null
+  return { base: m[1], tier: Number(m[2]), pack: m[3] }
+}
+
+/**
  * Validate the `:layer/:z/:x/:y` route params shared by both tile routes.
  * Returns the parsed params, or a human-readable error string the route
- * replies 400 with.
+ * replies 400 with. Base layers serve the z2..z12 band; a tier token serves
+ * EXACTLY its tier zoom (a tier archive has no pyramid).
  */
 export function parseTileParams(p: { layer: string; z: string; x: string; y: string }):
   | TileParams
   | string {
-  if (!ALLOWED_LAYERS.has(p.layer)) {
-    return `layer must be one of ${[...ALLOWED_LAYERS].join(', ')}`
+  const tier = parseTierToken(p.layer)
+  if (!ALLOWED_LAYERS.has(p.layer) && tier === null) {
+    return `layer must be one of ${[...ALLOWED_LAYERS].join(', ')} or a tier token`
   }
   const z = Number(p.z); const x = Number(p.x); const y = Number(p.y)
-  if (!Number.isInteger(z) || z < MIN_ZOOM || z > MAX_ZOOM) return 'bad zoom'
+  if (tier === null) {
+    if (!Number.isInteger(z) || z < MIN_ZOOM || z > MAX_ZOOM) return 'bad zoom'
+  } else if (z !== tier.tier) {
+    return 'bad zoom'
+  }
   const max = 2 ** z
   if (!Number.isInteger(x) || x < 0 || x >= max) return 'bad x'
   if (!Number.isInteger(y) || y < 0 || y >= max) return 'bad y'

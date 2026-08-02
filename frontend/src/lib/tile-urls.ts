@@ -15,6 +15,7 @@
 // There is deliberately NO legacy-URL fallback — the loose-file route is gone.
 
 import { useSyncExternalStore } from 'react'
+import { latLngToCell } from 'h3-js'
 
 // The published tile world's zoom band — ONE source for every component
 // (mirrors server heatmap-shared.ts and what the packer writes). Base level
@@ -39,6 +40,15 @@ const MANIFEST_POLL_MS = 10 * 60 * 1000
  *  OWN build — a partial republish (e.g. road-only b3 over a b2 world) flips
  *  only that layer's URLs, and the untouched layers re-fetch straight from
  *  the browser's immutable cache. */
+/** One published zoom-tier pack (city-z13 plan §D): its R4 coverage plus the
+ *  layer tokens its archives serve. Packs are immutable; LATER packs own an
+ *  R4 they share with an earlier one. */
+export interface TierPack {
+  pack: string
+  coverage: ReadonlySet<string>
+  layers: ReadonlySet<string>
+}
+
 export interface TileBuilds {
   latest: string
   byLayer: Record<string, string>
@@ -46,6 +56,10 @@ export interface TileBuilds {
    *  '' = same-origin. Deployment topology, delivered with the manifest so a
    *  serving move never needs a frontend rebuild. */
   base: string
+  /** Published zoom tiers ("z13" → packs), empty when none. Rides the SAME
+   *  snapshot as builds so deck layer ids / composite signatures re-key when
+   *  tier coverage changes (the generation-snapshot contract above). */
+  tiers: Record<string, TierPack[]>
 }
 
 let currentBuilds: TileBuilds | null = null
@@ -82,9 +96,97 @@ export function tileUrl(builds: TileBuilds, source: string, z: number, x: number
  * partial flip re-keys exactly the layers whose archives changed (unchanged
  * layers keep their deck tile cache), and a same-`latest` sequential partial
  * still re-keys the layer it republished (/gg Codex + Gemini consensus).
+ * Tier packs fold in as a suffix so coverage growth re-keys tile caches too.
  */
 export function buildKey(builds: TileBuilds, sources: readonly string[]): string {
-  return sources.map((s) => `${s}:${builds.byLayer[s] ?? builds.latest}`).join('|')
+  const base = sources.map((s) => `${s}:${builds.byLayer[s] ?? builds.latest}`).join('|')
+  const tiers = Object.entries(builds.tiers)
+    .map(([zoom, packs]) => `${zoom}[${packs.map((p) => p.pack).join(',')}]`)
+    .join('|')
+  return tiers ? `${base}|tiers:${tiers}` : base
+}
+
+/** True when any tier pack is published — the overlay raises its native tile
+ *  zoom only then, so the no-tier world keeps today's exact behavior. */
+export function hasTierCoverage(builds: TileBuilds, zoom: string): boolean {
+  return (builds.tiers[zoom]?.length ?? 0) > 0
+}
+
+/**
+ * R4 hex of a display tile's centre — the EXACT engine coverage rule
+ * (tile-painter region_runner::tile_centre_r4: arithmetic mean of the tile
+ * bbox's lat/lon, then H3 res 4). A different centre definition would create
+ * false-positive coverage and render authoritative silence over real z12
+ * data, so keep this in lockstep with the Rust.
+ */
+export function tileCentreR4(z: number, x: number, y: number): string {
+  const n = 2 ** z
+  const lonW = (x / n) * 360 - 180
+  const lonE = ((x + 1) / n) * 360 - 180
+  const latN = (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI
+  const latS = (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + 1)) / n))) * 180) / Math.PI
+  return latLngToCell((latN + latS) * 0.5, (lonW + lonE) * 0.5, 4)
+}
+
+/**
+ * Resolve one display tile of `source` against the published tier packs:
+ * the tier layer token to fetch natively, or `null` when the tile is outside
+ * tier coverage (caller falls back to the z12 parent). The LAST pack
+ * containing the tile's R4 owns the WHOLE R4 (append-order supersession) —
+ * no fallback to an older pack for a missing layer: the packer always ships
+ * the complete published layer set per pack, so a missing token in the
+ * owner means a broken publish, and serving an older pack's tile there
+ * would silently mix generations. A MISS on a returned token is
+ * authoritative silence, never a fallback.
+ */
+export function tierTokenFor(
+  builds: TileBuilds,
+  source: string,
+  z: number,
+  x: number,
+  y: number,
+): string | null {
+  const packs = builds.tiers[`z${z}`]
+  if (!packs?.length) return null
+  const r4 = tileCentreR4(z, x, y)
+  for (let i = packs.length - 1; i >= 0; i--) {
+    if (!packs[i].coverage.has(r4)) continue
+    const token = `${source}-z${z}-${packs[i].pack}`
+    return packs[i].layers.has(token) ? token : null
+  }
+  return null
+}
+
+/** The ONE fetch-plan contract (city-z13 plan §D) shared by the tile layer,
+ *  the over-zoom composite and the hover readout: either a native archive
+ *  URL, or the z12 parent URL plus which quadrant of it this tile magnifies. */
+export type TileFetchSpec =
+  | { url: string }
+  | { parentUrl: string; quadrant: { dx: 0 | 1; dy: 0 | 1 } }
+
+/**
+ * Fetch plan for one display tile of `source`:
+ *  - base band (z ≤ 12): the ordinary archive URL;
+ *  - tier zoom, covered: the pack's native tile (miss = authoritative silence);
+ *  - tier zoom, uncovered: the z12 parent + quadrant to crop-upscale client-side.
+ */
+export function resolveTileFetch(
+  builds: TileBuilds,
+  source: string,
+  z: number,
+  x: number,
+  y: number,
+): TileFetchSpec {
+  if (z <= BASE_ZOOM) return { url: tileUrl(builds, source, z, x, y) }
+  // Single-shift parent below assumes z == BASE_ZOOM + 1 — the only tier the
+  // UI activates (maxZoom clamps at 13; a z14 pack stays inert). Revisit the
+  // quadrant math before ever raising that ceiling.
+  const token = tierTokenFor(builds, source, z, x, y)
+  if (token !== null) return { url: tileUrl(builds, token, z, x, y) }
+  return {
+    parentUrl: tileUrl(builds, source, BASE_ZOOM, x >> 1, y >> 1),
+    quadrant: { dx: (x & 1) as 0 | 1, dy: (y & 1) as 0 | 1 },
+  }
 }
 
 /**
@@ -115,6 +217,7 @@ async function refreshTileBuild(): Promise<void> {
       build?: unknown
       tile_base?: unknown
       layers?: Record<string, { build?: unknown; file?: unknown }>
+      tiers?: Record<string, { packs?: unknown }>
     }
     if (typeof manifest.build !== 'string' || !BUILD_ID.test(manifest.build)) return
     const byLayer: Record<string, string> = {}
@@ -134,8 +237,42 @@ async function refreshTileBuild(): Promise<void> {
     const base = typeof manifest.tile_base === 'string' && /^https:\/\/[a-z0-9.-]+$/i.test(manifest.tile_base)
       ? manifest.tile_base
       : ''
-    const next: TileBuilds = { latest: manifest.build, byLayer, base }
-    if (JSON.stringify(next) !== JSON.stringify(currentBuilds)) {
+    // Tier index (packs are metadata; their archives are ordinary layer
+    // entries above). A malformed pack entry is SKIPPED, never trusted: a
+    // wrong coverage set would render authoritative silence over real data —
+    // so ids, coverage cells and layer tokens are validated by SHAPE, not
+    // just by type (canonical p<N>; canonical lowercase res-4 H3 ids, which
+    // always spell `84…ffffffff`; tokens that parse for this zoom + pack and
+    // whose archives exist in `layers`).
+    const tiers: Record<string, TierPack[]> = {}
+    for (const [zoom, entry] of Object.entries(manifest.tiers ?? {})) {
+      const zoomNum = /^z(1[3-8])$/.exec(zoom)?.[1]
+      if (!zoomNum || !Array.isArray(entry?.packs)) continue
+      const packs: TierPack[] = []
+      for (const p of entry.packs as Array<Record<string, unknown>>) {
+        if (
+          typeof p?.pack !== 'string' || !/^p[0-9]+$/.test(p.pack)
+          || !Array.isArray(p.coverage_r4)
+          || !Array.isArray(p.layers)
+          || !p.coverage_r4.every((c) => typeof c === 'string' && /^84[0-9a-f]{5}ffffffff$/.test(c))
+          || !p.layers.every((l) => typeof l === 'string'
+            && l.endsWith(`-z${zoomNum}-${p.pack}`)
+            && typeof (manifest.layers ?? {})[l] === 'object')
+        ) continue
+        packs.push({
+          pack: p.pack,
+          coverage: new Set(p.coverage_r4 as string[]),
+          layers: new Set(p.layers as string[]),
+        })
+      }
+      if (packs.length) tiers[zoom] = packs
+    }
+    const next: TileBuilds = { latest: manifest.build, byLayer, base, tiers }
+    // Sets are invisible to plain JSON.stringify — canonicalise them so a
+    // tier coverage change reliably notifies subscribers.
+    const canonical = (b: TileBuilds | null): string =>
+      JSON.stringify(b, (_key, value) => (value instanceof Set ? [...value].sort() : value))
+    if (canonical(next) !== canonical(currentBuilds)) {
       currentBuilds = next
       for (const cb of listeners) cb()
     }

@@ -409,10 +409,40 @@ fn validate_manifest_layers(
     Ok(())
 }
 
+/// Parse a tier layer token `{base}-z{tier}-p{N}` (city-z13 plan §D) into
+/// (base, tier, pack). Tier archives are ORDINARY manifest layer entries —
+/// that is what makes GC keep-sets, transaction recovery, publisher proofs
+/// and readiness apply to them with zero new machinery — so the layer-set
+/// contract below must recognise the token shape.
+fn parse_tier_token(name: &str) -> Option<(&str, u8, &str)> {
+    let (rest, pack) = name.rsplit_once('-')?;
+    if !pack.starts_with('p') || pack.len() < 2 || !pack[1..].bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (base, tier) = rest.rsplit_once('-')?;
+    let digits = tier.strip_prefix('z')?;
+    let tier_zoom: u8 = digits.parse().ok()?;
+    // Canonical digits only: `z013` must NOT parse — the TypeScript mirror
+    // (heatmap-shared.ts parseTierToken) rejects it, and a packer-accepted /
+    // server-refused manifest is the worst lockstep failure (gg z13 impl
+    // review). Round-trip equality pins the grammar to one spelling.
+    if digits != tier_zoom.to_string() {
+        return None;
+    }
+    if !(13..=18).contains(&tier_zoom) || !PUBLISHED_LAYERS.contains(&base) {
+        return None;
+    }
+    Some((base, tier_zoom, pack))
+}
+
 fn validate_manifest_layer_contract(
     layers: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<()> {
-    let actual: std::collections::BTreeSet<&str> = layers.keys().map(String::as_str).collect();
+    let actual: std::collections::BTreeSet<&str> = layers
+        .keys()
+        .map(String::as_str)
+        .filter(|name| parse_tier_token(name).is_none())
+        .collect();
     let expected: std::collections::BTreeSet<&str> = PUBLISHED_LAYERS.iter().copied().collect();
     if actual != expected {
         let missing: Vec<_> = expected.difference(&actual).copied().collect();
@@ -709,12 +739,21 @@ fn validate_exact_zoom_band(layer: &str, actual_zooms: &[u8], base_zoom: u8) -> 
 
 fn validate_snapshots_for_base(snapshots: &[LayerSnapshot], expected_base_zoom: u8) -> Result<()> {
     for layer in snapshots {
+        let actual_zooms: Vec<u8> = layer.stores.iter().map(|store| store.zoom).collect();
+        validate_exact_zoom_band(&layer.layer, &actual_zooms, expected_base_zoom)?;
+    }
+    validate_snapshots_common(snapshots)
+}
+
+/// Everything band-independent: source_id agreement with the layer registry,
+/// tile_px consistency across zoom stores, and the captured-snapshot fsck.
+/// Shared by the z2..z12 base contract and tier packs (band exactly [tier]).
+fn validate_snapshots_common(snapshots: &[LayerSnapshot]) -> Result<()> {
+    for layer in snapshots {
         let first = layer
             .stores
             .first()
             .with_context(|| format!("{}: captured no zoom stores", layer.layer))?;
-        let actual_zooms: Vec<u8> = layer.stores.iter().map(|store| store.zoom).collect();
-        validate_exact_zoom_band(&layer.layer, &actual_zooms, expected_base_zoom)?;
         let source_id = first.store.source_id();
         let expected_source_id = expected_source_id(&layer.layer)
             .with_context(|| format!("{}: unknown publish layer", layer.layer))?;
@@ -775,6 +814,65 @@ fn with_validated_store_snapshots<T>(
     with_store_snapshots_after_capture(store_root, only, timeout, validate_snapshots, body)
 }
 
+/// One immutable pack of a tier store (city-z13 plan §D): its zoom, pack id
+/// and the R4 cells whose z{tier} tiles this pack authoritatively covers.
+struct TierPack {
+    tier: u8,
+    pack: String,
+    coverage_r4: Vec<String>,
+}
+
+impl TierPack {
+    /// The manifest layer token (= archive name stem) for one base layer.
+    fn token(&self, base_layer: &str) -> String {
+        format!("{base_layer}-z{}-{}", self.tier, self.pack)
+    }
+}
+
+/// Tier-aware wrapper: a tier root validates against the tier's exact zoom
+/// band `[tier]` (a tier store has no pyramid below its own zoom), then the
+/// snapshots are re-labelled with the pack's layer tokens so staging, the
+/// transaction marker and the manifest all carry `{layer}-z{tier}-{pack}`
+/// names while source_id/fsck validation ran against the BASE layer names.
+fn with_tier_validated_store_snapshots<T>(
+    store_root: &Path,
+    only: &[String],
+    tier_mode: &Option<TierPack>,
+    body: impl FnOnce(Vec<LayerSnapshot>) -> Result<T>,
+) -> Result<T> {
+    match tier_mode {
+        None => with_validated_store_snapshots(store_root, only, STORE_LOCK_WAIT, body),
+        Some(tier_pack) => {
+            let tier = tier_pack.tier;
+            with_store_snapshots_after_capture(
+                store_root,
+                only,
+                STORE_LOCK_WAIT,
+                move |snapshots| {
+                    for layer in snapshots {
+                        let actual_zooms: Vec<u8> =
+                            layer.stores.iter().map(|store| store.zoom).collect();
+                        if actual_zooms != [tier] {
+                            bail!(
+                                "{}: tier root zoom set {:?}, expected exactly [{tier}]",
+                                layer.layer,
+                                actual_zooms
+                            );
+                        }
+                    }
+                    validate_snapshots_common(snapshots)
+                },
+                |mut snapshots| {
+                    for snapshot in &mut snapshots {
+                        snapshot.layer = tier_pack.token(&snapshot.layer);
+                    }
+                    body(snapshots)
+                },
+            )
+        }
+    }
+}
+
 /// Testable phase boundary: `body` is unreachable unless validation succeeds, and every writer
 /// domain remains excluded until both callbacks return.
 fn with_store_snapshots_after_capture<T>(
@@ -830,28 +928,105 @@ fn acquire_pack_lock(out_dir: &Path, timeout: Duration) -> Result<StoreFileLock>
 
 fn main() -> Result<()> {
     // usage: tile-store-pack <store-root> <out-dir> <build-id> [--layer L]...
+    //        tile-store-pack <tier-root>  <out-dir> <build-id> --tier 13 --pack p001 --coverage-r4 <file>
     // With --layer, only the named layers are packed and the manifest MERGES:
     // untouched layers keep their previous archive + build id — a road-only
     // republish costs one layer's Brotli, not all eight (owner ask 2026-07-09).
+    // With --tier (city-z13 plan §D), the root is a TIER root (zoom band
+    // exactly [tier]); every published layer packs into an immutable PACK —
+    // archives named `{layer}-z{tier}-{pack}.{build}.pmtiles`, manifest layer
+    // entries under those tokens (ordinary entries: GC/recovery/readiness
+    // apply unchanged) plus one `tiers.z{tier}.packs[]` index entry carrying
+    // the pack's R4 coverage for the serving resolver.
     let mut positional: Vec<String> = Vec::new();
     let mut only: Vec<String> = Vec::new();
+    let mut tier: Option<u8> = None;
+    let mut pack_id: Option<String> = None;
+    let mut coverage_file: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "--layer" {
             only.push(args.next().context("--layer needs a value")?);
+        } else if a == "--tier" {
+            tier = Some(args.next().context("--tier needs a zoom")?.parse()?);
+        } else if a == "--pack" {
+            pack_id = Some(args.next().context("--pack needs a value")?);
+        } else if a == "--coverage-r4" {
+            coverage_file = Some(args.next().context("--coverage-r4 needs a file")?);
         } else {
             positional.push(a);
         }
     }
     let [store_root, out_dir, build]: [String; 3] = positional.try_into().map_err(|_| {
         anyhow::anyhow!(
-            "usage: tile-store-pack <store-root> <out-dir> <build-id (b<N>)> [--layer L]..."
+            "usage: tile-store-pack <store-root> <out-dir> <build-id (b<N>)> [--layer L]... \
+             [--tier <zoom> --pack p<N> --coverage-r4 <file>]"
         )
     })?;
     if !build.starts_with('b') || !build[1..].chars().all(|c| c.is_ascii_digit()) || build.len() < 2
     {
         bail!("build id must be b<N>, got {build:?}");
     }
+    let tier_mode = match (tier, &pack_id, &coverage_file) {
+        (None, None, None) => None,
+        (Some(tier_zoom), Some(pack), Some(coverage)) => {
+            if !only.is_empty() {
+                bail!("--tier packs the whole tier store set; --layer is not combinable");
+            }
+            if !(13..=18).contains(&tier_zoom) {
+                bail!("--tier {tier_zoom} out of range 13..=18");
+            }
+            if !pack.starts_with('p')
+                || pack.len() < 2
+                || !pack[1..].bytes().all(|b| b.is_ascii_digit())
+            {
+                bail!("--pack must be p<N>, got {pack:?}");
+            }
+            let coverage_r4: Vec<String> = fs::read_to_string(coverage)
+                .with_context(|| format!("read --coverage-r4 {coverage}"))?
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect();
+            if coverage_r4.is_empty() {
+                bail!("--coverage-r4 {coverage} lists no cells");
+            }
+            for cell in &coverage_r4 {
+                // Real parse + resolution check, not a shape check: a res-3/5
+                // list would publish a silently INERT pack (coverage never
+                // matches a tile centre → everything upscales; gg z13 impl
+                // review). Canonical lowercase is pinned by the round-trip —
+                // the serving resolver compares strings.
+                let parsed = cell
+                    .parse::<h3o::CellIndex>()
+                    .with_context(|| format!("--coverage-r4: {cell:?} is not an H3 cell id"))?;
+                if parsed.resolution() != h3o::Resolution::Four {
+                    bail!(
+                        "--coverage-r4: {cell} is res {}, coverage must be res 4",
+                        parsed.resolution()
+                    );
+                }
+                if parsed.to_string() != *cell {
+                    bail!("--coverage-r4: {cell:?} is not canonical (want {parsed})");
+                }
+            }
+            // Sanity: every published layer must produce a token the layer
+            // contract will accept back.
+            for base in PUBLISHED_LAYERS {
+                let token = format!("{base}-z{tier_zoom}-{pack}");
+                if parse_tier_token(&token) != Some((*base, tier_zoom, pack.as_str())) {
+                    bail!("tier token {token:?} does not round-trip the layer contract");
+                }
+            }
+            Some(TierPack {
+                tier: tier_zoom,
+                pack: pack.clone(),
+                coverage_r4,
+            })
+        }
+        _ => bail!("--tier, --pack and --coverage-r4 must be given together"),
+    };
     let store_root = PathBuf::from(store_root);
     let out_dir = PathBuf::from(out_dir);
     fs::create_dir_all(&out_dir)?;
@@ -865,14 +1040,15 @@ fn main() -> Result<()> {
     let _pack_lock = acquire_pack_lock(&out_dir, STORE_LOCK_WAIT)?;
     recover_pack_transactions(&out_dir)?;
     cleanup_orphan_pack_temps(&out_dir)?;
-    if partial {
+    if partial || tier_mode.is_some() {
         // Preflight the merge base BEFORE any (immutable) archive is written —
         // discovering a missing manifest after the pack leaves undeletable
         // {layer}.{build}.pmtiles behind and burns the build id (/gg Codex).
+        // A tier pack always merges (it never retires base layers).
         let manifest = out_dir.join("current.json");
         if !manifest.exists() {
             bail!(
-                "partial pack needs an existing {} to merge over — run a full pack first",
+                "partial/tier pack needs an existing {} to merge over — run a full pack first",
                 manifest.display()
             );
         }
@@ -885,20 +1061,41 @@ fn main() -> Result<()> {
         // hours writing a new immutable archive. Selected layers are replaced
         // by fresh, post-hash proofs below.
         validate_manifest_layers(&out_dir, previous_layers, Some(&only))?;
+        if let Some(tier_pack) = &tier_mode {
+            // Pack ids are immutable like archives: re-publishing p001 must
+            // fail loudly, never replace coverage in place.
+            let existing = previous
+                .get("tiers")
+                .and_then(|tiers| tiers.get(format!("z{}", tier_pack.tier)))
+                .and_then(|entry| entry.get("packs"))
+                .and_then(|packs| packs.as_array());
+            if existing.is_some_and(|packs| {
+                packs.iter().any(|pack| {
+                    pack.get("pack").and_then(|id| id.as_str()) == Some(&tier_pack.pack)
+                })
+            }) {
+                bail!(
+                    "tier z{} pack {} already published — packs are immutable, pick the next id",
+                    tier_pack.tier,
+                    tier_pack.pack
+                );
+            }
+        }
     }
-    with_validated_store_snapshots(&store_root, &only, STORE_LOCK_WAIT, |snapshots| {
+    with_tier_validated_store_snapshots(&store_root, &only, &tier_mode, |snapshots| {
         eprintln!(
             "pack {build}: {} layers{} → {}",
             snapshots.len(),
-            if partial {
-                " (partial — manifest merges)"
-            } else {
-                ""
+            match (&tier_mode, partial) {
+                (Some(t), _) => format!(" (tier z{} pack {})", t.tier, t.pack),
+                (None, true) => " (partial — manifest merges)".to_string(),
+                (None, false) => String::new(),
             },
             out_dir.display()
         );
 
-        let results = pack_snapshots_transactionally(snapshots, &out_dir, &build, partial)?;
+        let results =
+            pack_snapshots_transactionally(snapshots, &out_dir, &build, partial, &tier_mode)?;
         // Deletion no longer happens here (2026-07-16 Track 2 rewrite — docs/dev/
         // checkout-restructure-plan.md). Per-environment pins (`current.{env}.json`) mean a
         // prod pointer can legitimately lag dev by many publishes; this pack's old
@@ -920,6 +1117,7 @@ fn pack_snapshots_transactionally(
     out_dir: &Path,
     build: &str,
     partial: bool,
+    tier_mode: &Option<TierPack>,
 ) -> Result<Vec<LayerResult>> {
     // Finish every expensive archive under a hidden name before exposing even the first final
     // name. Nesting layer fan-out and each layer's Rayon prefetch deadlocks at one pool thread,
@@ -937,7 +1135,7 @@ fn pack_snapshots_transactionally(
             .map(StagedLayerResult::publish)
             .collect::<Result<_>>()?;
         results.sort_by(|left, right| left.layer.cmp(&right.layer));
-        write_manifest(out_dir, build, &results, partial)?;
+        write_manifest(out_dir, build, &results, partial, tier_mode)?;
         Ok(results)
     })();
 
@@ -1135,23 +1333,49 @@ fn write_manifest(
     build: &str,
     results: &[LayerResult],
     partial: bool,
+    tier_mode: &Option<TierPack>,
 ) -> Result<()> {
     let created_unix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let path = out_dir.join("current.json");
 
-    // Seed from the previous manifest on a partial pack; a FULL pack starts
-    // empty so retired layers cannot linger.
-    let mut layers: serde_json::Map<String, serde_json::Value> = if partial {
-        let prev: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(&path)
-                .context("partial pack needs an existing current.json to merge over")?,
-        )?;
-        prev.get("layers")
-            .and_then(|l| l.as_object())
-            .cloned()
-            .context("current.json has no layers object")?
+    // The previous manifest, when one exists. Unknown top-level keys (e.g.
+    // `tiers` written by a tier pack) are ALWAYS carried forward — a z12
+    // publish must never silently drop tier state (gg z13 v2, Codex #4).
+    let previous: Option<serde_json::Map<String, serde_json::Value>> = if path.exists() {
+        Some(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path)?)?
+                .as_object()
+                .cloned()
+                .context("current.json is not an object")?,
+        )
     } else {
-        serde_json::Map::new()
+        None
+    };
+    if (partial || tier_mode.is_some()) && previous.is_none() {
+        bail!("partial/tier pack needs an existing current.json to merge over");
+    }
+
+    // Seed layer entries: a FULL z12 pack retires the base layers it rebuilds
+    // (so a dropped layer cannot linger) but RETAINS tier-token entries — tier
+    // packs are published and retired by their own invocations only. Partial
+    // and tier packs seed everything.
+    let mut layers: serde_json::Map<String, serde_json::Value> = match &previous {
+        Some(prev) => {
+            let prev_layers = prev
+                .get("layers")
+                .and_then(|l| l.as_object())
+                .context("current.json has no layers object")?;
+            if partial || tier_mode.is_some() {
+                prev_layers.clone()
+            } else {
+                prev_layers
+                    .iter()
+                    .filter(|(name, _)| parse_tier_token(name).is_some())
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect()
+            }
+        }
+        None => serde_json::Map::new(),
     };
     for r in results {
         let proof = &r.publisher_proof;
@@ -1175,10 +1399,50 @@ fn write_manifest(
     // Recheck every retained and newly packed archive immediately before the
     // atomic manifest flip. This closes the partial-pack preflight race.
     validate_manifest_layers(out_dir, &layers, None)?;
-    let json = serde_json::json!({
-        "build": build, "created_unix": created_unix, "layers": layers,
-    })
-    .to_string();
+
+    // The manifest object: previous unknown keys first, then the keys this
+    // packer owns. A tier pack additionally upserts its index entry under
+    // `tiers.z{N}.packs[]` — coverage for the serving resolver; the archives
+    // themselves are protected by their ordinary `layers` entries above.
+    let mut manifest = previous.unwrap_or_default();
+    manifest.insert("build".into(), serde_json::json!(build));
+    manifest.insert("created_unix".into(), serde_json::json!(created_unix));
+    manifest.insert("layers".into(), serde_json::Value::Object(layers));
+    if let Some(tier_pack) = tier_mode {
+        let tiers = manifest
+            .entry("tiers")
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .context("current.json tiers is not an object")?;
+        let tier_entry = tiers
+            .entry(format!("z{}", tier_pack.tier))
+            .or_insert_with(|| serde_json::json!({ "packs": [] }))
+            .as_object_mut()
+            .context("tier entry is not an object")?;
+        let packs = tier_entry
+            .entry("packs")
+            .or_insert_with(|| serde_json::json!([]))
+            .as_array_mut()
+            .context("tier packs is not an array")?;
+        if packs
+            .iter()
+            .any(|p| p.get("pack").and_then(|id| id.as_str()) == Some(&tier_pack.pack))
+        {
+            bail!(
+                "tier z{} pack {} already in manifest — packs are immutable",
+                tier_pack.tier,
+                tier_pack.pack
+            );
+        }
+        packs.push(serde_json::json!({
+            "pack": tier_pack.pack,
+            "build": build,
+            "created_unix": created_unix,
+            "coverage_r4": tier_pack.coverage_r4,
+            "layers": results.iter().map(|r| r.layer.clone()).collect::<Vec<_>>(),
+        }));
+    }
+    let json = serde_json::Value::Object(manifest).to_string();
 
     // Build-unique temp name: two concurrent packers must not clobber each
     // other's staged manifest (the rename itself is last-writer-wins, atomic).
@@ -1225,6 +1489,153 @@ mod tests {
 
     fn create_one_tile_road_store(store_root: &Path, value: u8) -> Result<PathBuf> {
         create_one_tile_layer_store(store_root, "road", SOURCE_ID_ROAD, value)
+    }
+
+    /// A tier layer store: exactly one z{tier} container (no pyramid band).
+    fn create_one_tile_tier_store(
+        tier_root: &Path,
+        layer: &str,
+        source_id: u8,
+        tier: u8,
+        value: u8,
+    ) -> Result<PathBuf> {
+        let layer_dir = tier_root.join(layer);
+        let mut cells = vec![NO_DATA; TILE_PX * TILE_PX];
+        cells[10] = value;
+        let blob = wire_hm3::encode_tile_bytes(&cells, source_id)?;
+        let store = TileStore::create(&layer_dir, tier, source_id, TILE_PX as u16)?;
+        store.put_blob(4424, 2774, TileCodec::BrotliHm3, &blob)?;
+        store.sync_all()?;
+        Ok(layer_dir)
+    }
+
+    #[test]
+    fn tier_pack_tokens_index_and_full_pack_preservation() -> Result<()> {
+        let dir = tempdir()?;
+        let store_root = dir.path().join("store");
+        let tier_root = dir.path().join("z13").join("store");
+        let out_dir = dir.path().join("pmtiles");
+        fs::create_dir_all(&out_dir)?;
+
+        // Base full pack b1 establishes the manifest a tier pack merges over.
+        let mut snapshots = Vec::new();
+        for layer in PUBLISHED_LAYERS {
+            let layer_dir = create_one_tile_layer_store(
+                &store_root,
+                layer,
+                expected_source_id(layer).context("published layer has a source id")?,
+                40,
+            )?;
+            snapshots.push(snapshot_test_layer(&layer_dir, layer)?);
+        }
+        validate_snapshots_for_base(&snapshots, 6)?;
+        pack_snapshots_transactionally(snapshots, &out_dir, "b1", false, &None)?;
+
+        // Tier pack b2: token archives + the tiers index entry.
+        let tier_pack = TierPack {
+            tier: 13,
+            pack: "p001".to_string(),
+            coverage_r4: vec!["841e355ffffffff".to_string()],
+        };
+        let mut tier_snapshots = Vec::new();
+        for layer in PUBLISHED_LAYERS {
+            let layer_dir = create_one_tile_tier_store(
+                &tier_root,
+                layer,
+                expected_source_id(layer).context("published layer has a source id")?,
+                13,
+                41,
+            )?;
+            let mut snapshot = snapshot_test_layer(&layer_dir, layer)?;
+            let zooms: Vec<u8> = snapshot.stores.iter().map(|store| store.zoom).collect();
+            assert_eq!(zooms, [13], "tier store band is exactly [13]");
+            snapshot.layer = tier_pack.token(&snapshot.layer);
+            tier_snapshots.push(snapshot);
+        }
+        pack_snapshots_transactionally(tier_snapshots, &out_dir, "b2", false, &Some(tier_pack))?;
+
+        assert!(
+            out_dir.join("road-z13-p001.b2.pmtiles").exists(),
+            "tier archive published under the token name"
+        );
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out_dir.join("current.json"))?)?;
+        assert_eq!(
+            manifest["layers"]["road-z13-p001"]["build"], "b2",
+            "tier token is an ordinary layers entry"
+        );
+        assert_eq!(
+            manifest["layers"]["road"]["build"], "b1",
+            "base layers untouched by the tier pack"
+        );
+        let pack0 = &manifest["tiers"]["z13"]["packs"][0];
+        assert_eq!(pack0["pack"], "p001");
+        assert_eq!(pack0["coverage_r4"][0], "841e355ffffffff");
+        assert_eq!(
+            pack0["layers"].as_array().map(|l| l.len()),
+            Some(PUBLISHED_LAYERS.len()),
+            "index lists every packed token"
+        );
+
+        // Full base pack b3 must RETAIN tier entries and the tiers index.
+        let mut base_again = Vec::new();
+        for layer in PUBLISHED_LAYERS {
+            base_again.push(snapshot_test_layer(&store_root.join(layer), layer)?);
+        }
+        pack_snapshots_transactionally(base_again, &out_dir, "b3", false, &None)?;
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out_dir.join("current.json"))?)?;
+        assert_eq!(manifest["layers"]["road"]["build"], "b3");
+        assert_eq!(
+            manifest["layers"]["road-z13-p001"]["build"], "b2",
+            "full z12 pack preserves tier layer entries"
+        );
+        assert_eq!(
+            manifest["tiers"]["z13"]["packs"][0]["pack"], "p001",
+            "full z12 pack preserves the tiers index"
+        );
+
+        // A duplicate pack id is refused (packs are immutable).
+        let tier_dup = TierPack {
+            tier: 13,
+            pack: "p001".to_string(),
+            coverage_r4: vec!["841e309ffffffff".to_string()],
+        };
+        let mut dup_snapshots = Vec::new();
+        for layer in PUBLISHED_LAYERS {
+            let mut snapshot = snapshot_test_layer(&tier_root.join(layer), layer)?;
+            snapshot.layer = tier_dup.token(&snapshot.layer);
+            dup_snapshots.push(snapshot);
+        }
+        let err =
+            pack_snapshots_transactionally(dup_snapshots, &out_dir, "b4", false, &Some(tier_dup));
+        assert!(err.is_err(), "duplicate tier pack id must fail");
+        Ok(())
+    }
+
+    #[test]
+    fn tier_token_parse_round_trip_and_rejects() {
+        assert_eq!(
+            parse_tier_token("road-z13-p001"),
+            Some(("road", 13u8, "p001"))
+        );
+        assert_eq!(
+            parse_tier_token("aircraft-ground-z14-p2"),
+            Some(("aircraft-ground", 14u8, "p2"))
+        );
+        assert_eq!(parse_tier_token("road"), None, "base names are not tokens");
+        assert_eq!(
+            parse_tier_token("road-z12-p1"),
+            None,
+            "z12 is the base, never a tier"
+        );
+        assert_eq!(parse_tier_token("bogus-z13-p1"), None, "unknown base layer");
+        assert_eq!(
+            parse_tier_token("road-z13-q1"),
+            None,
+            "pack id must be p<N>"
+        );
+        assert_eq!(parse_tier_token("road-z13-p"), None, "pack id needs digits");
     }
 
     fn snapshot_test_layer(layer_dir: &Path, layer: &str) -> Result<LayerSnapshot> {
@@ -1827,7 +2238,7 @@ mod tests {
             snapshots.push(snapshot_test_layer(&layer_dir, layer)?);
         }
         validate_snapshots_for_base(&snapshots, 6)?;
-        pack_snapshots_transactionally(snapshots, &out_dir, "b7", false)?;
+        pack_snapshots_transactionally(snapshots, &out_dir, "b7", false, &None)?;
 
         let exists = |f: &str| out_dir.join(f).exists();
         assert!(

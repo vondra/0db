@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { basename, join, relative, resolve, sep } from 'node:path'
-import { ALLOWED_LAYERS, PMTILES_BASE } from './routes/heatmap-shared.js'
+import { ALLOWED_LAYERS, parseTierToken, PMTILES_BASE } from './routes/heatmap-shared.js'
 import { FRONTEND_DIST, H3R4_DIR, SOURCE_READER_PATH } from './runtime-paths.js'
 import { resolveManifestPath } from './tile-manifest-reader.js'
 
@@ -134,7 +134,7 @@ async function validatePmtilesManifest(
     }
   }
   for (const [layer, entry] of Object.entries(manifest.layers)) {
-    if (!ALLOWED_LAYERS.has(layer)) {
+    if (!ALLOWED_LAYERS.has(layer) && parseTierToken(layer) === null) {
       throw new Error(`${manifestPath} has unexpected layer ${layer}`)
     }
     if (!entry || typeof entry.file !== 'string' || basename(entry.file) !== entry.file) {
@@ -179,6 +179,51 @@ async function validatePmtilesManifest(
     const archive = await stat(archivePath, { bigint: true })
     if (!archive.isFile() || archive.size !== BigInt(entry.bytes as number)) {
       throw new Error(`${archivePath} size ${archive.size} does not match manifest ${entry.bytes}`)
+    }
+  }
+  validateTiersIndex(manifest, manifestPath)
+}
+
+/** Referential integrity of the zoom-tier index (city-z13 plan §D): a torn
+ *  `tiers` object must fail readiness, not silently mis-serve — the serving
+ *  resolver decides authoritative silence from it. Keep in lockstep with the
+ *  private ops copy (validate-manifest.mjs). */
+export function validateTiersIndex(
+  manifest: PmtilesManifest,
+  manifestPath: string,
+): void {
+  const tiers = manifest.tiers
+  if (tiers === undefined) return
+  if (!tiers || typeof tiers !== 'object' || Array.isArray(tiers)) {
+    throw new Error(`${manifestPath} tiers is not an object`)
+  }
+  for (const [zoom, entry] of Object.entries(tiers as Record<string, { packs?: unknown }>)) {
+    const zoomNum = /^z(1[3-8])$/.exec(zoom)?.[1]
+    if (!zoomNum) throw new Error(`${manifestPath} tiers has invalid zoom key ${zoom}`)
+    if (!Array.isArray(entry?.packs)) throw new Error(`${manifestPath} tiers.${zoom} has no packs array`)
+    const seen = new Set<string>()
+    for (const p of entry.packs as Array<Record<string, unknown>>) {
+      if (typeof p?.pack !== 'string' || !/^p[0-9]+$/.test(p.pack)) {
+        throw new Error(`${manifestPath} tiers.${zoom} has a non-canonical pack id`)
+      }
+      if (seen.has(p.pack)) throw new Error(`${manifestPath} tiers.${zoom} pack ${p.pack} is duplicated`)
+      seen.add(p.pack)
+      if (!Array.isArray(p.coverage_r4) || p.coverage_r4.length === 0
+        || !p.coverage_r4.every((c) => typeof c === 'string' && /^84[0-9a-f]{5}ffffffff$/.test(c))) {
+        throw new Error(`${manifestPath} tiers.${zoom} pack ${p.pack} has invalid coverage_r4`)
+      }
+      if (!Array.isArray(p.layers) || p.layers.length === 0) {
+        throw new Error(`${manifestPath} tiers.${zoom} pack ${p.pack} has no layers list`)
+      }
+      for (const token of p.layers) {
+        const parsed = typeof token === 'string' ? parseTierToken(token) : null
+        if (!parsed || String(parsed.tier) !== zoomNum || parsed.pack !== p.pack) {
+          throw new Error(`${manifestPath} tiers.${zoom} pack ${p.pack} lists foreign token ${String(token)}`)
+        }
+        if (!manifest.layers || typeof manifest.layers[token as string] !== 'object') {
+          throw new Error(`${manifestPath} tiers.${zoom} pack ${p.pack} token ${String(token)} has no layers entry`)
+        }
+      }
     }
   }
 }

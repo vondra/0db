@@ -2,14 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMap } from 'react-map-gl/maplibre'
 import maplibregl from 'maplibre-gl'
 
-import { fetchAndDecodeHM3, NO_DATA, TILE_PX } from '../lib/hm3-decoder'
+import { NO_DATA, TILE_PX } from '../lib/hm3-decoder'
 import type { HeatmapSource } from './HeatmapOverlay'
+import { fetchSpecGrid } from '../lib/progressive-tile-loader'
 import { lngLatToTileFloat } from '../lib/tile-math'
-import { BASE_ZOOM, MIN_ZOOM, tileUrl, useTileBuild } from '../lib/tile-urls'
+import { BASE_ZOOM, MIN_ZOOM, hasTierCoverage, resolveTileFetch, useTileBuild } from '../lib/tile-urls'
 
 const TILE_CACHE_MAX = 64
 
 type TileEntry = Uint8Array | 'loading' | 'failed'
+
+/** Cache key for one fetch-plan entry — parent crops key on parent+quadrant. */
+function specCacheKey(spec: ReturnType<typeof resolveTileFetch>): string {
+  return 'url' in spec ? spec.url : `${spec.parentUrl}#q${spec.quadrant.dx}${spec.quadrant.dy}`
+}
 
 interface Props {
   /** Layers to read: the active subset, or `['total']` when all are on. */
@@ -72,14 +78,23 @@ export default function HoverTooltip({ sources }: Props) {
     // under a layer's minZoom) — the tooltip goes silent too, instead of
     // clamping up and quoting pixels that aren't painted (/gg Gemini).
     if (Math.round(hover.zoom) < MIN_ZOOM) return null
-    const z = Math.min(BASE_ZOOM, Math.round(hover.zoom))
+    // Published z13 tier packs raise the readable ceiling with the renderer
+    // (covered tiles read natively; uncovered ones read their upscaled z12
+    // parent via the same fetch plan — byte-identical to what's painted).
+    // Mirror the renderer's HiDPI zoomOffset too: deck requests z+1 on
+    // DPR ≥ 1.5, so reading round(zoom) alone would quote a different byte
+    // than the painted pixel wherever the finer level exists (gg z13 impl
+    // review, Codex #6).
+    const zTop = build !== null && hasTierCoverage(build, 'z13') ? BASE_ZOOM + 1 : BASE_ZOOM
+    const zoomOffset = window.devicePixelRatio >= 1.5 ? 1 : 0
+    const z = Math.min(zTop, Math.round(hover.zoom) + zoomOffset)
     const [xFloat, yFloat] = lngLatToTileFloat(hover.lng, hover.lat, z)
     const tx = Math.floor(xFloat)
     const ty = Math.floor(yFloat)
     const px = Math.min(TILE_PX - 1, Math.floor((xFloat - tx) * TILE_PX))
     const py = Math.min(TILE_PX - 1, Math.floor((yFloat - ty) * TILE_PX))
     return { z, tx, ty, px, py }
-  }, [hover])
+  }, [hover, build])
 
   // Fetch any missing source tiles in the background. Cache is a
   // simple insertion-ordered LRU keyed by the tile URL — the URL carries the
@@ -88,15 +103,20 @@ export default function HoverTooltip({ sources }: Props) {
     if (!tileInfo || build === null) return
     const { z, tx, ty } = tileInfo
     for (const source of sources) {
-      const key = tileUrl(build, source, z, tx, ty)
+      const spec = resolveTileFetch(build, source, z, tx, ty)
+      const key = specCacheKey(spec)
       if (tileCache.current.has(key)) continue
       tileCache.current.set(key, 'loading')
       ;(async () => {
         try {
-          const decoded = await fetchAndDecodeHM3(key)
+          const decoded = await fetchSpecGrid(spec, undefined, 'low')
           tileCache.current.set(key, decoded?.cells ?? 'failed')
         } catch {
-          tileCache.current.set(key, 'failed')
+          // Transient (network/5xx) — DROP the entry so the next hover
+          // retries, instead of pinning '—' for the whole session (gg z13
+          // impl review, Codex #7). A decoded empty tile still caches as
+          // authoritative 'failed'-shaped silence above.
+          tileCache.current.delete(key)
         }
         while (tileCache.current.size > TILE_CACHE_MAX) {
           const oldest = tileCache.current.keys().next().value
@@ -124,7 +144,7 @@ export default function HoverTooltip({ sources }: Props) {
     let anyData = false
     let anyLoading = false
     for (const source of sources) {
-      const entry = tileCache.current.get(tileUrl(build, source, z, tx, ty))
+      const entry = tileCache.current.get(specCacheKey(resolveTileFetch(build, source, z, tx, ty)))
       if (entry instanceof Uint8Array) {
         const byte = entry[py * TILE_PX + px]
         if (byte !== NO_DATA) {

@@ -6,10 +6,11 @@
 // plain strings here — importing the component's HeatmapSource union back
 // would create a type cycle (buildKey/tileUrl accept strings anyway).
 
-import { fetchAndDecodeHM3, TILE_PX, NO_DATA } from './hm3-decoder'
+import { TILE_PX, NO_DATA } from './hm3-decoder'
 import { composeOffThread } from './compose-off-thread'
+import { fetchSpecGrid } from './progressive-tile-loader'
 import { lngLatToTileFloat, tileXToLng, tileYToLat } from './tile-math'
-import { BASE_ZOOM, buildKey, tileUrl, type TileBuilds } from './tile-urls'
+import { BASE_ZOOM, buildKey, hasTierCoverage, resolveTileFetch, type TileBuilds } from './tile-urls'
 
 // One base tile of margin around the viewport so a small pan at deep zoom stays
 // covered without an immediate rebuild (a base tile is magnified 2-8x here).
@@ -29,12 +30,16 @@ type LngLatBounds = { getWest(): number; getEast(): number; getNorth(): number; 
  *  back to tiles). The build snapshot makes a mid-session generation flip rebuild
  *  the composite instead of keeping stale-generation pixels. */
 export function compositeSig(build: TileBuilds, sources: readonly string[], range: Range): string {
-  return `${buildKey(build, sources)}|${[...sources].join(',')}|${range.x0},${range.x1},${range.y0},${range.y1}`
+  return `${buildKey(build, sources)}|${[...sources].join(',')}|z${range.z}:${range.x0},${range.x1},${range.y0},${range.y1}`
 }
 
-/** The base-zoom tile range covering `bounds` (+ a 1-tile margin), clamped to the world. */
-export function baseRange(bounds: LngLatBounds): Range {
-  const z = BASE_ZOOM
+/** The composite's tile range covering `bounds` (+ a 1-tile margin), clamped
+ *  to the world. With published z13 tier packs the composite stitches at z13 —
+ *  covered tiles land natively, the rest as upscaled z12 parent quadrants
+ *  (resolveTileFetch) — so over-zoom never paints a coarser image than the
+ *  per-tile path it replaces. */
+export function baseRange(bounds: LngLatBounds, build: TileBuilds): Range {
+  const z = hasTierCoverage(build, 'z13') ? BASE_ZOOM + 1 : BASE_ZOOM
   const span = 2 ** z
   const [xWest, yNorth] = lngLatToTileFloat(bounds.getWest(), bounds.getNorth(), z)
   const [xEast, ySouth] = lngLatToTileFloat(bounds.getEast(), bounds.getSouth(), z)
@@ -67,10 +72,11 @@ export async function buildComposite(
   const decoded = await Promise.all(
     jobs.map(({ source, tx, ty }) => {
       const wx = ((tx % span) + span) % span
-      // Deliberately no priority hint: composite fetches carry no abort and a
-      // superseded batch (up to 96×|sources| requests) must not outrank the
-      // fresh view's sharp tiles.
-      return fetchAndDecodeHM3(tileUrl(build, source, z, wx, ty)).catch(() => null)
+      // 'low' priority: composite fetches carry no abort and a superseded
+      // batch (up to 96×|sources| requests) must not outrank the fresh
+      // view's sharp tiles.
+      return fetchSpecGrid(resolveTileFetch(build, source, z, wx, ty), undefined, 'low')
+        .catch(() => null)
     }),
   )
   // Bucket the landed tiles into one grid per source (allocated only on first hit).

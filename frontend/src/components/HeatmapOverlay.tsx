@@ -7,7 +7,7 @@ import { useMap } from 'react-map-gl/maplibre'
 import { TILE_PX } from '../lib/hm3-decoder'
 import { PREVIEW_DELTA } from '../lib/hm3-compose'
 import { lngLatToTileFloat } from '../lib/tile-math'
-import { BASE_ZOOM, MIN_ZOOM, WORLD_EXTENT, buildKey, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
+import { BASE_ZOOM, MIN_ZOOM, WORLD_EXTENT, buildKey, hasTierCoverage, resolveTileFetch, tileUrl, useTileBuild, type TileBuilds } from '../lib/tile-urls'
 import { loadTileProgressively, fetchAncestor, type HeatTile } from '../lib/progressive-tile-loader'
 import { compositeSig, baseRange, buildComposite, type Composite } from '../lib/tile-composite'
 
@@ -173,7 +173,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       // composite is for the wrong source/range — fall back to the per-tile
       // TileLayer (correct data, maybe a faint seam) rather than paint stale tiles,
       // until `update` rebuilds the matching composite.
-      if (overzoom && c && c.sig === compositeSig(build, sources, baseRange(map.getBounds()))) {
+      if (overzoom && c && c.sig === compositeSig(build, sources, baseRange(map.getBounds(), build))) {
         dropTileTails('') // the tile layer is gone — its tails must not linger
         layers.push(new BitmapLayer({
           id: 'hm3-composite',
@@ -212,7 +212,7 @@ export default function HeatmapOverlay({ sources, highlightGeometry }: Props): n
       const map = mapRef?.getMap()
       if (!map || !mounted.current) return
       if (map.getZoom() >= OVERZOOM_FROM && sources.length > 0 && build !== null) {
-        const range = baseRange(map.getBounds())
+        const range = baseRange(map.getBounds(), build)
         const sig = compositeSig(build, sources, range)
         if (composite.current?.sig !== sig) {
           // Re-apply NOW so the stale composite (built for the old source/range)
@@ -344,7 +344,12 @@ function makeHeatmapTileLayer(
     // _TileLayerProps doesn't type beforeId though MapboxOverlay reads it at runtime.
     ...(beforeId ? { beforeId } : {}),
     minZoom: MIN_ZOOM,
-    maxZoom: BASE_ZOOM,
+    // Published z13 tier packs raise the native tile ceiling: deck then
+    // requests z13 indices where the display (or HiDPI zoomOffset) reaches
+    // them, and resolveTileFetch routes each source to the pack's native
+    // tile (covered) or its z12 parent quadrant (uncovered). Without tiers
+    // this is exactly the old BASE_ZOOM clamp.
+    maxZoom: hasTierCoverage(build, 'z13') ? BASE_ZOOM + 1 : BASE_ZOOM,
     // +1 on HiDPI screens: one data cell ≈ one device pixel wherever a finer
     // pyramid level exists (maxZoom still clamps at the z12 data floor).
     zoomOffset,
@@ -365,7 +370,7 @@ function makeHeatmapTileLayer(
       const { x, y, z } = index
       const span = 2 ** z
       const wx = ((x % span) + span) % span // wrap x across the antimeridian
-      const urls = sources.map((s) => tileUrl(build, s, z, wx, y))
+      const specs = sources.map((s) => resolveTileFetch(build, s, z, wx, y))
       // Owner fallback policy 2026-07-16: exact zoom > deck's cached z−1 >
       // z−2 > … > coarse preview > blank. If ANY nearby ancestor is already
       // session-loaded, skip the preview — deck's no-overlap refinement keeps
@@ -392,7 +397,7 @@ function makeHeatmapTileLayer(
       const key = `${z}/${wx}/${y}`
       const token = Symbol(key)
       inFlight.set(key, token)
-      return loadTileProgressively(urls, signal, onRefined, tails, preview, deckFallback).then((data) => {
+      return loadTileProgressively(specs, signal, onRefined, tails, preview, deckFallback).then((data) => {
         // Register only while THIS request is still the current one for the
         // key — a tile evicted while pending (or superseded by a newer
         // request) must not become a ghost ancestor.
