@@ -364,7 +364,8 @@ __device__ __forceinline__ bool seg_isect_t(
 // δ ON THE FLY (terrain LERPed between the ray's bare samples, LOS-gated),
 // keeping only the max-δ winner — no sort, no dedup (duplicate hits evaluate
 // identically, max() is idempotent), no dynamic memory. `obst` is the
-// pointer-table {n, metas, starts, refs, edges} built by gpu_surface.
+// pointer-table {n, metas, starts, refs, edges, cell_max_h} built by
+// gpu_surface (slot 5 == 0 ⇒ branch-and-bound pruning disabled).
 // Exclusion radius: the GPU lanes are line layers (roads/rail), which pass 0
 // on the CPU too — no gate here by construction.
 __device__ void obstacle_best_candidate(
@@ -381,11 +382,20 @@ __device__ void obstacle_best_candidate(
     const unsigned int* starts = (const unsigned int*)obst[2];
     const unsigned int* refs = (const unsigned int*)obst[3];
     const float* edges = (const float*)obst[4];
+    const float* maxh = (const float*)obst[5];
+    // Branch-and-bound prune inputs (z13 plan E2): the best candidate a cell
+    // can produce is bounded by the profile's max bare elevation plus the
+    // cell's max edge height; δ(t, top) is CONVEX in t for a fixed top, so
+    // its max over the cell's chainage interval sits at an endpoint — the
+    // bound is exact, never approximate.
+    double terr_max = bare[0];
+    for (int i = 1; i < n; i++) terr_max = fmax(terr_max, bare[i]);
     for (int gi = 0; gi < n_idx; gi++) {
-        const double* m = &metas[gi * 12];
+        const double* m = &metas[gi * 13];
         double mlon = m[2], cell = m[3], minx = m[4], miny = m[5];
         int cols = (int)m[6], rows = (int)m[7];
         size_t soff = (size_t)m[8], roff = (size_t)m[9], eoff = (size_t)m[10];
+        size_t hoff = (size_t)m[12];
         double sx = (src_lon - m[1]) * mlon, sy = (src_lat - m[0]) * M_LAT;
         double rx = (rcv_lon - m[1]) * mlon, ry = (rcv_lat - m[0]) * M_LAT;
         double dx = rx - sx, dy = ry - sy;
@@ -409,9 +419,54 @@ __device__ void obstacle_best_candidate(
         double t_max_x = dx != 0.0 ? fabs((next_xb - sx) / dx) : 1e300;
         double t_max_y = dy != 0.0 ? fabs((next_yb - sy) / dy) : 1e300;
         long guard = (long)cols + (long)rows + 4;
+        double t_enter = 0.0;
         while (1) {
             size_t c = (size_t)cy * (size_t)cols + (size_t)cx;
             unsigned int lo = starts[soff + c], hi = starts[soff + c + 1];
+            // Exact cell prune (maxh == NULL ⇒ pruning disabled — the host
+            // writes slot 5 as 0 under NOISE_GPU_DISABLE_PRUNE=1, an
+            // incident A/B lever that needs no rebuild).
+            // top_bound = terr_max + cell max edge height
+            // (+1e-9 m outward slack so no f64 rounding chain — e.g. the
+            // terrain LERP exceeding terr_max by an ulp — can push a real
+            // candidate above the bound). Validity: δ(t, top) as a function
+            // of top is strictly convex with its MINIMUM exactly on the LOS
+            // (both direction cosines cancel there), so every edge the exact
+            // loop admits (top > los) has δ increasing in top ⇒ δ ≤ δ(top_bound).
+            // In t, δ(·, top_bound) is convex ⇒ its max over the cell's
+            // chainage interval sits at an endpoint. An edge shared with a
+            // later cell whose crossing lies outside this interval is listed
+            // (supercover) and re-found in the cell that owns the crossing,
+            // so skipping here never loses it. Skips: LOS skip mirrors the
+            // exact loop's `top <= los` discard; the best-candidate skip is
+            // STRICT `<` — a bound that can still TIE must walk the edges,
+            // because the winner rule prefers lower t among f64-equal δ.
+            if (hi > lo && maxh) {
+                double t_exit = fmin(fmin(t_max_x, t_max_y), 1.0);
+                double t_a = fmin(fmax(t_enter, 0.0), 1.0);
+                double top_bound = terr_max + (double)maxh[hoff + c] + 1e-9;
+                double los_min = fmin(se + (re - se) * t_a, se + (re - se) * t_exit);
+                if (top_bound <= los_min) { lo = hi; }
+                else if (*have) {
+                    double d_bound = 0.0;
+                    for (int ep = 0; ep < 2; ep++) {
+                        double tt = ep == 0 ? t_a : t_exit;
+                        double d_sg = tt * dist, d_rg = (1.0 - tt) * dist;
+                        double d = sqrt(d_sg * d_sg + (top_bound - se) * (top_bound - se))
+                                 + sqrt(d_rg * d_rg + (top_bound - re) * (top_bound - re)) - dsr;
+                        d_bound = fmax(d_bound, d);
+                    }
+                    // DELTA-space slack, not just the height bump above: the
+                    // two-sqrt-minus-dsr evaluation cancels near grazing and
+                    // its f64 result can land ~1e-12 m BELOW the exact loop's
+                    // candidate δ (measured by direct IEEE evaluation — gg
+                    // z13 impl review, Codex #4); dδ/dtop ≈ 0 there, so the
+                    // 1e-9 m height slack adds ~nothing. 1e-9 m of δ dwarfs
+                    // the whole rounding chain (eps·10^5 m ≈ 2e-11) and is
+                    // physically nil.
+                    if (d_bound + 1e-9 < best_delta) { lo = hi; }
+                }
+            }
             for (unsigned int k = lo; k < hi; k++) {
                 const float* e = &edges[(eoff + (size_t)refs[roff + k]) * 5];
                 double tt;
@@ -447,6 +502,7 @@ __device__ void obstacle_best_candidate(
             }
             if ((cx == end_cx && cy == end_cy) || guard <= 0) break;
             guard--;
+            t_enter = fmin(t_max_x, t_max_y);
             if (t_max_x < t_max_y) { t_max_x += t_delta_x; cx += step_x; }
             else                   { t_max_y += t_delta_y; cy += step_y; }
             if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) break;

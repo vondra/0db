@@ -215,18 +215,25 @@ pub fn pack_tile(
 
 /// Host-flat obstacle store for the CUDA lane (geodata-v2 1.6): every
 /// per-cell [`ObstacleIndex`] of a region's [`ObstacleSet`] flattened into
-/// four uploadable arrays. Per index, `metas` carries 12 f64:
+/// five uploadable arrays. Per index, `metas` carries 13 f64:
 /// `[origin_lat, origin_lon, m_per_deg_lon, cell_m, min_x, min_y, cols,
-/// rows, starts_off, refs_off, edges_off, n_refs_cells]` where the offsets
-/// index the SHARED `starts`/`refs`/`edges` arrays (edges stride 5:
-/// x0,y0,x1,y1,height — `GpuGridView` order). The kernel DDA mirrors
-/// `ObstacleIndex::crossings` per index; e2-full is the parity gate.
+/// rows, starts_off, refs_off, edges_off, n_starts, maxh_off]` where the
+/// offsets index the SHARED `starts`/`refs`/`edges`/`cell_max_h` arrays
+/// (edges stride 5: x0,y0,x1,y1,height — `GpuGridView` order). The kernel
+/// DDA mirrors `ObstacleIndex::crossings` per index; e2-full is the parity
+/// gate. `cell_max_h` powers the exact branch-and-bound cell prune (z13
+/// plan E2): δ is convex in t for a fixed top, so the interval bound at the
+/// cell's chainage endpoints is exact.
 pub struct ObstacleFlat {
     pub n_indexes: usize,
     pub metas: Vec<f64>,
     pub starts: Vec<u32>,
     pub refs: Vec<u32>,
     pub edges: Vec<f32>,
+    /// Per grid cell: max edge height in that cell (0 for empty cells) —
+    /// the kernel's branch-and-bound prune (a cell whose best possible
+    /// candidate cannot beat the running max-δ is skipped whole).
+    pub cell_max_h: Vec<f32>,
 }
 
 pub fn flatten_obstacles(
@@ -234,10 +241,11 @@ pub fn flatten_obstacles(
 ) -> ObstacleFlat {
     let mut flat = ObstacleFlat {
         n_indexes: set.indexes.len(),
-        metas: Vec::with_capacity(set.indexes.len() * 12),
+        metas: Vec::with_capacity(set.indexes.len() * 13),
         starts: Vec::new(),
         refs: Vec::new(),
         edges: Vec::new(),
+        cell_max_h: Vec::new(),
     };
     for idx in &set.indexes {
         let v = idx.gpu_view();
@@ -257,7 +265,18 @@ pub fn flatten_obstacles(
             // it (its walk is bounded by cols×rows), but the flatten test
             // proves the shared arrays tile exactly with it.
             v.cell_starts.len() as f64,
+            // slot 12: this index's offset into the shared cell_max_h.
+            flat.cell_max_h.len() as f64,
         ]);
+        let n_cells = v.cell_starts.len().saturating_sub(1);
+        for c in 0..n_cells {
+            let (lo, hi) = (v.cell_starts[c] as usize, v.cell_starts[c + 1] as usize);
+            let mut mx = 0.0f32;
+            for &eref in &v.edge_refs[lo..hi] {
+                mx = mx.max(v.edges_xyxyh[eref as usize * 5 + 4]);
+            }
+            flat.cell_max_h.push(mx);
+        }
         flat.starts.extend_from_slice(v.cell_starts);
         flat.refs.extend_from_slice(v.edge_refs);
         flat.edges.extend_from_slice(&v.edges_xyxyh);
@@ -287,14 +306,14 @@ mod obstacle_flat_tests {
         let set = ObstacleSet { indexes: sets };
         let flat = super::flatten_obstacles(&set);
         assert_eq!(flat.n_indexes, 2);
-        assert_eq!(flat.metas.len(), 24);
+        assert_eq!(flat.metas.len(), 26);
         // Second index's offsets start exactly where the first index ends,
         // and its extents tile the shared arrays completely.
         let (starts_off2, refs_off2, edges_off2, n_cells2) = (
-            flat.metas[12 + 8] as usize,
-            flat.metas[12 + 9] as usize,
-            flat.metas[12 + 10] as usize,
-            flat.metas[12 + 11] as usize,
+            flat.metas[13 + 8] as usize,
+            flat.metas[13 + 9] as usize,
+            flat.metas[13 + 10] as usize,
+            flat.metas[13 + 11] as usize,
         );
         assert_eq!(flat.metas[11] as usize, starts_off2, "starts contiguous");
         assert_eq!(starts_off2 + n_cells2, flat.starts.len(), "starts tiled");
@@ -306,7 +325,41 @@ mod obstacle_flat_tests {
             flat.refs.len(),
             "refs tiled"
         );
-        assert!(flat.edges.len() % 5 == 0 && !flat.refs.is_empty());
+        assert!(flat.edges.len().is_multiple_of(5) && !flat.refs.is_empty());
+        // E2 per-cell max heights: offsets (slot 12) tile the shared array
+        // exactly like starts/refs, and every value equals the true max over
+        // that cell's edge heights (here every edge is the same 10 m ring, so
+        // occupied cells carry exactly 10.0 and empty cells 0.0).
+        let (maxh_off1, maxh_off2) = (flat.metas[12] as usize, flat.metas[13 + 12] as usize);
+        assert_eq!(maxh_off1, 0, "first index's maxh starts the array");
+        // metas[11] is n_starts (= cells + 1, CSR); maxh carries one entry
+        // per CELL, so the second offset is the first index's cell count.
+        let n_cells1 = flat.metas[11] as usize - 1;
+        assert_eq!(maxh_off2, n_cells1, "maxh contiguous across indexes");
+        assert_eq!(
+            maxh_off2 + (n_cells2 - 1),
+            flat.cell_max_h.len(),
+            "maxh tiled"
+        );
+        for (c, &mx) in flat.cell_max_h.iter().enumerate() {
+            let (idx_off, cell) = if c < n_cells1 {
+                (0, c)
+            } else {
+                (1, c - n_cells1)
+            };
+            let (lo, hi) = {
+                let so = flat.metas[idx_off * 13 + 8] as usize;
+                (
+                    flat.starts[so + cell] as usize,
+                    flat.starts[so + cell + 1] as usize,
+                )
+            };
+            assert_eq!(
+                mx,
+                if hi > lo { 10.0 } else { 0.0 },
+                "cell {c}: maxh equals the max edge height"
+            );
+        }
     }
 }
 
@@ -318,17 +371,19 @@ mod obstacle_upload {
     use cudarc::driver::{CudaDevice, CudaSlice};
     use std::sync::Arc;
 
-    /// The region's vector obstacles resident on the GPU. `table` is the 5-slot
-    /// pointer table the kernel dereferences ({n, metas, starts, refs, edges});
-    /// the four `_`-prefixed slices only exist to keep those device allocations
-    /// alive for as long as the table can be launched with. Raster mode = a
-    /// 1-element `[0]` table.
+    /// The region's vector obstacles resident on the GPU. `table` is the 6-slot
+    /// pointer table the kernel dereferences ({n, metas, starts, refs, edges,
+    /// cell_max_h}); the `_`-prefixed slices only exist to keep those device
+    /// allocations alive for as long as the table can be launched with. Raster
+    /// mode = a 1-element `[0]` table (the kernel reads slots 1..=5 only when
+    /// slot 0 is non-zero).
     pub struct ObstDev {
         pub table: CudaSlice<u64>,
         _metas: Option<CudaSlice<f64>>,
         _starts: Option<CudaSlice<u32>>,
         _refs: Option<CudaSlice<u32>>,
         _edges: Option<CudaSlice<f32>>,
+        _maxh: Option<CudaSlice<f32>>,
     }
 
     pub fn upload_obstacles(
@@ -343,6 +398,7 @@ mod obstacle_upload {
                 _starts: None,
                 _refs: None,
                 _edges: None,
+                _maxh: None,
             });
         };
         let flat = crate::flatten_obstacles(set);
@@ -350,6 +406,12 @@ mod obstacle_upload {
         let starts = dev.htod_copy(flat.starts).context("obst starts")?;
         let refs = dev.htod_copy(flat.refs).context("obst refs")?;
         let edges = dev.htod_copy(flat.edges).context("obst edges")?;
+        let maxh = dev.htod_copy(flat.cell_max_h).context("obst maxh")?;
+        // NOISE_GPU_DISABLE_PRUNE=1: publish a NULL maxh pointer — the kernel
+        // then walks every non-empty cell's edge list (pre-E2 behavior), an
+        // incident A/B lever that needs no rebuild. Output is identical
+        // either way (the prune is exact); only the cost differs.
+        let prune_disabled = std::env::var("NOISE_GPU_DISABLE_PRUNE").is_ok_and(|v| v == "1");
         let table = dev
             .htod_copy(vec![
                 flat.n_indexes as u64,
@@ -357,6 +419,11 @@ mod obstacle_upload {
                 *starts.device_ptr(),
                 *refs.device_ptr(),
                 *edges.device_ptr(),
+                if prune_disabled {
+                    0
+                } else {
+                    *maxh.device_ptr()
+                },
             ])
             .context("obst table")?;
         Ok(ObstDev {
@@ -365,6 +432,7 @@ mod obstacle_upload {
             _starts: Some(starts),
             _refs: Some(refs),
             _edges: Some(edges),
+            _maxh: Some(maxh),
         })
     }
 }

@@ -51,6 +51,96 @@ const ETA: f64 = 0.40; // energy-budget skip threshold (production default)
 const TW: f64 = 8.0; // pack_tile swizzle width — the binned kernel ignores it (only
                      // the un-binned `rail` bench kernel in e2-full swizzles by it)
 
+/// Process-wide byte budget for host-resident tile blocks (E1, gg z13 v2
+/// review): bounds building + ready blocks across ALL stream workers and
+/// both halves of each worker's double buffer — a per-worker block-count
+/// window is not a memory bound (2 workers × current+next × window ⇒ up to
+/// 8 batches). Blocks reserve their exact pre-build size (the same
+/// `FusedGrid::grid_dims` math the build allocates with), correct it to the
+/// measured size after building, and release when the GPU loop drops them.
+struct PipelineByteGate {
+    held: std::sync::Mutex<u64>,
+    cv: std::sync::Condvar,
+    budget: u64,
+}
+
+/// RAII reservation of gate bytes for ONE whole chunk. Acquired by the
+/// builder BEFORE any block of the chunk is built (one permit per chunk —
+/// per-block permits inside a rayon collect deadlock the moment a chunk's
+/// aggregate exceeds the budget: finished blocks hold bytes while a sibling
+/// waits, and nothing releases until the whole collect returns; gg z13 impl
+/// review, Codex CRITICAL). Dropping the permit releases — panic-safe.
+struct ChunkPermit {
+    bytes: u64,
+}
+
+impl ChunkPermit {
+    fn adjust_to(&mut self, measured: u64) {
+        pipeline_gate().adjust(self.bytes, measured);
+        self.bytes = measured;
+    }
+}
+
+impl Drop for ChunkPermit {
+    fn drop(&mut self) {
+        pipeline_gate().release(self.bytes);
+    }
+}
+
+impl PipelineByteGate {
+    /// Block until `bytes` fits in the budget, then reserve them. A request
+    /// larger than the whole budget is admitted once nothing else is held —
+    /// one chunk always makes progress. Deadlock-freedom rests on TWO rules
+    /// (both violated by the first draft of this gate): (1) only BUILDER
+    /// threads ever wait here; (2) the GPU loop drops its chunk's permit
+    /// BEFORE joining the next builder, so a builder waiting for space can
+    /// never be waited ON by the thread that owns the space.
+    fn acquire(&self, bytes: u64) -> ChunkPermit {
+        let mut held = self.held.lock().unwrap();
+        while *held > 0 && *held + bytes > self.budget {
+            held = self.cv.wait(held).unwrap();
+        }
+        *held += bytes;
+        ChunkPermit { bytes }
+    }
+
+    /// Correct a reservation from the pre-build estimate to the measured
+    /// size. Never blocks (the bytes are already resident); shrinking wakes
+    /// waiters. Saturating like `release` — accounting drift must degrade to
+    /// a too-loose gate, never wrap into a stream hang.
+    fn adjust(&self, from: u64, to: u64) {
+        let mut held = self.held.lock().unwrap();
+        *held = held.saturating_sub(from).saturating_add(to);
+        if to < from {
+            self.cv.notify_all();
+        }
+    }
+
+    fn release(&self, bytes: u64) {
+        let mut held = self.held.lock().unwrap();
+        *held = held.saturating_sub(bytes);
+        self.cv.notify_all();
+    }
+}
+
+/// `NOISE_GPU_PIPELINE_MB` (default 3072) sizes the gate. 30 m regions run
+/// ~120–300 MB/block, so the default keeps today's overlap; 10 m-field
+/// regions (~9× halo bytes) self-limit to ~1–2 resident blocks — the z13
+/// plan's E1 acceptance — with no per-resolution configuration.
+fn pipeline_gate() -> &'static PipelineByteGate {
+    static GATE: std::sync::OnceLock<PipelineByteGate> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| PipelineByteGate {
+        held: std::sync::Mutex::new(0),
+        cv: std::sync::Condvar::new(),
+        budget: std::env::var("NOISE_GPU_PIPELINE_MB")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&mb| mb >= 1)
+            .unwrap_or(3072)
+            * (1 << 20),
+    })
+}
+
 thread_local! {
     /// One `RealRasters` per rayon worker, REUSED across every region/cell. This is a
     /// DELIBERATE, twice-decided design — do not "fix" it to a single shared store again:
@@ -470,8 +560,9 @@ fn process_region(
     // Vector obstacles (geodata-v2 1.6, QM_VECTOR_BUILDINGS=1): the same
     // loader + policy as the CPU builder (all-or-raster, region cell required
     // under partial, shard errors hard). Uploaded ONCE per region; the kernel
-    // reads it through a 5-slot pointer table {n, metas, starts, refs, edges}
-    // (obst[0]==0 ⇒ raster mode — one zero row keeps cuMemAlloc happy).
+    // reads it through a 6-slot pointer table {n, metas, starts, refs, edges,
+    // cell_max_h} (obst[0]==0 ⇒ raster mode — one zero row keeps cuMemAlloc
+    // happy; slot 5 == 0 ⇒ E2 pruning disabled).
     let obstacle_data = ObstacleData::load_for_r4s(&cfg.h3r4, r4, &ring)
         .with_context(|| format!("load obstacles R4 {r4:015x}"))?;
     let obst_dev = upload_obstacles(dev, obstacle_data.set())?;
@@ -501,54 +592,124 @@ fn process_region(
             .or_default()
             .push((tx, ty));
     }
-    // Crop every block's shared halo in PARALLEL over a SHARED rayon pool, REUSING each rayon
-    // worker's persistent RealRasters (RASTERS thread_local — zero cross-thread synchronization
-    // on the sampling hot path; see the decision record at the thread_local). The crop uses all
-    // cores instead of one, which a serial crop starved on a crop-bound box
-    // (dense cells, weak GPU → crop is the bottleneck). The GPU kernel loop below stays
-    // SEQUENTIAL over the SAME sorted block order, so output is byte-identical.
+    // Crop block halos in a BOUNDED double-buffered pipeline: build window k+1
+    // on a scoped thread (internally a rayon par_iter — each worker keeps its
+    // persistent RASTERS thread_local, the twice-decided zero-sync design)
+    // while the main thread runs window k's GPU work. The GPU loop consumes
+    // the SAME sorted block order, so output is byte-identical to the old
+    // build-everything-first path (which materialised EVERY block at once —
+    // ~2.8 GiB/region measured at 10 m fields; gg z13 review).
+    //
+    // RESIDENCY CONTRACT (gg z13 impl review, Codex CRITICAL — two prior
+    // drafts deadlocked): host block bytes are bounded PROCESS-WIDE by the
+    // byte gate. ONE RAII permit per CHUNK, acquired by the builder for the
+    // chunk's summed pre-build estimate BEFORE any block is built (per-block
+    // permits inside the rayon collect deadlock once a chunk's aggregate
+    // exceeds the budget), corrected to the measured total after the build,
+    // and dropped by the GPU loop BEFORE it joins the next builder (a
+    // builder blocked on the gate must never be waited ON by the thread
+    // holding the bytes it needs). Only builder threads ever wait on the
+    // gate ⇒ no circular wait. The gate bounds RESIDENT chunk bytes; the
+    // per-block d_inner/H2D staging inside process_block is a transient of
+    // at most one block's halo (documented slack, covered by the default
+    // budget's headroom). `NOISE_GPU_PIPELINE_BLOCKS` (default 2, ≥1) is
+    // only the chunk granularity of the double buffer, not the memory
+    // contract.
     let block_keys: Vec<(u32, u32)> = blocks.keys().copied().collect();
-    let raster_started = Instant::now();
-    let batches: Vec<((u32, u32), TileBatch)> = block_keys
-        .par_iter()
-        .map(|&(bx, by)| {
-            RASTERS.with(|slot| {
-                let mut slot = slot.borrow_mut();
-                let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
-                let mut batch = TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters);
-                // Vector mode: pre-bake vector reflection into rx_refl — the
-                // rxar upload then carries it to the kernel unchanged. The
-                // bake itself is the one shared helper (SPEC §3.8); only
-                // tiles this block paints are baked.
-                if let Some(set) = obstacle_data.set() {
-                    for &(tx, ty) in &blocks[&(bx, by)] {
-                        let tile = &mut batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
-                        tile_painter::source_loader_obstacle::bake_tile_vector_rx_refl(tile, set);
+    let window: usize = std::env::var("NOISE_GPU_PIPELINE_BLOCKS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&w: &usize| w >= 1)
+        .unwrap_or(2);
+    let raster_ns = std::sync::atomic::AtomicU64::new(0);
+    type Chunk = (Vec<((u32, u32), TileBatch)>, ChunkPermit);
+    let build_chunk = |keys: &[(u32, u32)]| -> Chunk {
+        let t0 = Instant::now();
+        let estimate: u64 = keys
+            .iter()
+            .map(|&(bx, by)| TileBatch::estimate_heap_bytes(cfg.z, bx, by, cfg.batch_n, cfg.halo_m))
+            .sum();
+        let mut permit = pipeline_gate().acquire(estimate);
+        let built: Vec<((u32, u32), TileBatch)> = keys
+            .par_iter()
+            .map(|&(bx, by)| {
+                RASTERS.with(|slot| {
+                    let mut slot = slot.borrow_mut();
+                    let rasters = slot.get_or_insert_with(|| RealRasters::new(Path::new(prepared)));
+                    let mut batch =
+                        TileBatch::build(cfg.z, bx, by, cfg.batch_n, cfg.halo_m, rasters);
+                    // Vector mode: pre-bake vector reflection into rx_refl —
+                    // the rxar upload then carries it to the kernel unchanged
+                    // (the one shared helper, SPEC §3.8); only painted tiles.
+                    if let Some(set) = obstacle_data.set() {
+                        for &(tx, ty) in &blocks[&(bx, by)] {
+                            let tile =
+                                &mut batch.tiles[((ty - by) * cfg.batch_n + (tx - bx)) as usize];
+                            tile_painter::source_loader_obstacle::bake_tile_vector_rx_refl(
+                                tile, set,
+                            );
+                        }
                     }
-                }
-                ((bx, by), batch)
+                    ((bx, by), batch)
+                })
             })
-        })
-        .collect();
-    let raster = raster_started.elapsed();
-    for (key, batch) in &batches {
-        let (bx, by) = *key;
-        process_block(
-            dev,
-            f,
-            batch,
-            cfg,
-            bx,
-            by,
-            &blocks[key],
-            &region_rows,
-            &src_dev,
-            &barrier_data,
-            &obst_dev,
-            stats,
-            prog,
-        )?;
+            .collect();
+        permit.adjust_to(built.iter().map(|(_, batch)| batch.heap_bytes()).sum());
+        raster_ns.fetch_add(
+            t0.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        (built, permit)
+    };
+    let mut start = window.min(block_keys.len());
+    let mut current: Option<Chunk> = Some(build_chunk(&block_keys[..start]));
+    while current.as_ref().is_some_and(|(chunk, _)| !chunk.is_empty()) {
+        let next_end = (start + window).min(block_keys.len());
+        let next_range = start..next_end;
+        // The builder always gets joined and its chunk collected (RAII permit)
+        // even when a block fails — a stream worker survives a failed region,
+        // so a leaked reservation would permanently shrink the shared budget.
+        let (built_next, gpu_err) = std::thread::scope(|scope| {
+            let next_handle = (!next_range.is_empty())
+                .then(|| scope.spawn(|| build_chunk(&block_keys[next_range.clone()])));
+            let mut err = None;
+            for (key, batch) in &current.as_ref().expect("loop guard").0 {
+                let (bx, by) = *key;
+                if let Err(e) = process_block(
+                    dev,
+                    f,
+                    batch,
+                    cfg,
+                    bx,
+                    by,
+                    &blocks[key],
+                    &region_rows,
+                    &src_dev,
+                    &barrier_data,
+                    &obst_dev,
+                    stats,
+                    prog,
+                ) {
+                    err = Some(e);
+                    break;
+                }
+            }
+            // Drop the consumed chunk (and its permit) BEFORE joining: the
+            // builder may be blocked on the gate waiting for exactly these
+            // bytes — joining first is the deadlock the review caught.
+            drop(current.take());
+            let built = next_handle.map(|h| h.join().expect("chunk builder panicked"));
+            (built, err)
+        });
+        if let Some(e) = gpu_err {
+            drop(built_next); // RAII releases the unconsumed next chunk
+            return Err(e);
+        }
+        current = built_next;
+        start = next_end;
     }
+    let raster =
+        std::time::Duration::from_nanos(raster_ns.load(std::sync::atomic::Ordering::Relaxed));
     let written: usize = stats.values().map(|s| s.n_written).sum::<usize>() - written0;
     Ok(RegionResult {
         written,
@@ -873,6 +1034,7 @@ fn main() -> Result<()> {
     // position (not value) avoids dropping a positional that equals a flag's value.
     let (mut output, mut bbox, mut layers_s, mut batch_s, mut regions_file) =
         (None, None, None, None, None);
+    let mut zoom_s: Option<String> = None;
     let mut stream = false;
     let mut pos: Vec<String> = Vec::new();
     let mut i = 0;
@@ -883,7 +1045,7 @@ fn main() -> Result<()> {
                 stream = true;
                 i += 1;
             }
-            "--output" | "--bbox" | "--layers" | "--batch" | "--regions-file" => {
+            "--output" | "--bbox" | "--layers" | "--batch" | "--regions-file" | "--zoom" => {
                 let v = argv
                     .get(i + 1)
                     .filter(|s| !s.starts_with("--"))
@@ -894,6 +1056,7 @@ fn main() -> Result<()> {
                     "--bbox" => bbox = Some(v),
                     "--layers" => layers_s = Some(v),
                     "--regions-file" => regions_file = Some(v),
+                    "--zoom" => zoom_s = Some(v),
                     _ => batch_s = Some(v),
                 }
                 i += 2;
@@ -912,7 +1075,19 @@ fn main() -> Result<()> {
         .map(LineLayer::parse)
         .collect::<Result<_>>()?;
 
-    let z = 12u8; // 512@z12 base (the old z13@256 lattice)
+    // 512px tiles: z12 is the world base (same lattice as the old z13@256);
+    // higher zooms build refinement tiers (city-z13 plan). Block/tile math
+    // downstream is zoom-parametric already; the bound matches tile-painter's.
+    let z: u8 = match zoom_s.as_deref() {
+        Some(s) => {
+            let z: u8 = s.parse().context("--zoom must be an integer")?;
+            if !(6..=18).contains(&z) {
+                bail!("--zoom {z} out of range 6..=18");
+            }
+            z
+        }
+        None => 12,
+    };
     let prepared = env("NOISE_GPU_PREPARED", "/dev/shm/qmap/prepared");
     let baseline = env("NOISE_GPU_BASELINE", ""); // empty ⇒ no diff (production)
     let year = env("DATA_YEAR", "2026");

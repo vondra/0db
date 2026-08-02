@@ -19,6 +19,7 @@ use std::sync::Arc;
 use noise_compute::constants::{m_per_deg_lon, DEFAULT_RECEIVER_HEIGHT, M_PER_DEG_LAT};
 use noise_compute::types::RasterSampler;
 
+use crate::fused_grid::FusedPixel;
 use crate::{FusedGrid, RealRasters};
 
 /// Side length of one output tile in receiver pixels. 512 since the 2026-07
@@ -434,6 +435,71 @@ pub struct TileBatch {
 }
 
 impl TileBatch {
+    /// Heap bytes owned per tile: the six inner per-pixel vectors
+    /// (3×f32 + 3×u8 = 15 B/px); the shared halo is counted once at
+    /// batch level, never per tile.
+    const INNER_BYTES_PER_PX: u64 = 15;
+
+    /// The bbox `build` sizes its shared halo with — the ONE definition,
+    /// shared with `estimate_heap_bytes` so the byte-gate's pre-image can
+    /// never drift from the real allocation.
+    fn batch_bbox(zoom: u8, base_x: u32, base_y: u32, batch_n: u32) -> TileBbox {
+        let nw = TileBbox::from_xyz(zoom, base_x, base_y);
+        let se = TileBbox::from_xyz(zoom, base_x + batch_n - 1, base_y + batch_n - 1);
+        TileBbox {
+            west_lon: nw.west_lon,
+            east_lon: se.east_lon,
+            north_lat: nw.north_lat,
+            south_lat: se.south_lat,
+        }
+    }
+
+    /// Actual heap bytes resident for this batch: inner vectors, each
+    /// tile's own struct (the inline `rx_lat`/`rx_lon` receiver arrays live
+    /// there), the `tiles` Vec, and the shared halo once. Feeds noise-gpu's
+    /// process-wide pipeline byte gate, which corrects its pre-build
+    /// reservation to this value.
+    pub fn heap_bytes(&self) -> u64 {
+        let inner: u64 = self
+            .tiles
+            .iter()
+            .map(|t| {
+                (t.inner_elev_m.capacity() * 4
+                    + t.rx_alt_m.capacity() * 4
+                    + t.rx_refl_db.capacity() * 4
+                    + t.inner_building.capacity()
+                    + t.inner_forest.capacity()
+                    + t.inner_imd.capacity()) as u64
+            })
+            .sum();
+        let tiles_vec = (self.tiles.capacity() * std::mem::size_of::<FusedTileZ13>()) as u64;
+        let halo = self.tiles.first().map(|t| t.halo.heap_bytes()).unwrap_or(0);
+        inner + tiles_vec + halo
+    }
+
+    /// Exact pre-build size of `build(zoom, base, batch_n, halo_m)`: the
+    /// same bbox → `FusedGrid::grid_dims` sizing the build itself performs
+    /// (one source of truth), the fixed 15 B/px inner vectors, and the
+    /// per-tile struct storage. Lets a byte-budget gate reserve BEFORE
+    /// building; `heap_bytes()` afterwards only corrects allocator slack
+    /// (normally zero — `vec![x; n]` and `with_capacity` are exact).
+    pub fn estimate_heap_bytes(
+        zoom: u8,
+        base_x: u32,
+        base_y: u32,
+        batch_n: u32,
+        halo_m: f64,
+    ) -> u64 {
+        let batch_bbox = Self::batch_bbox(zoom, base_x, base_y, batch_n);
+        let (lat_min, lat_max, lon_min, lon_max) = halo_bbox_for(&batch_bbox, halo_m);
+        let (rows, cols, _, _) = FusedGrid::grid_dims(lat_min, lat_max, lon_min, lon_max);
+        let halo_bytes = (rows * cols * std::mem::size_of::<FusedPixel>()) as u64;
+        let n_tiles = (batch_n as u64) * (batch_n as u64);
+        let inner_bytes = n_tiles * (TILE_PX * TILE_PX) as u64 * Self::INNER_BYTES_PER_PX;
+        let tiles_bytes = n_tiles * std::mem::size_of::<FusedTileZ13>() as u64;
+        halo_bytes + inner_bytes + tiles_bytes
+    }
+
     /// Build a batch whose north-west tile is at `(base_x, base_y)`.
     ///
     /// Tiles are stored in row-major (y-then-x) order: index
@@ -447,14 +513,7 @@ impl TileBatch {
         rasters: &RealRasters,
     ) -> Self {
         assert!(batch_n >= 1, "batch_n must be ≥ 1");
-        let nw = TileBbox::from_xyz(zoom, base_x, base_y);
-        let se = TileBbox::from_xyz(zoom, base_x + batch_n - 1, base_y + batch_n - 1);
-        let batch_bbox = TileBbox {
-            west_lon: nw.west_lon,
-            east_lon: se.east_lon,
-            north_lat: nw.north_lat,
-            south_lat: se.south_lat,
-        };
+        let batch_bbox = Self::batch_bbox(zoom, base_x, base_y, batch_n);
         let halo = Arc::new(build_halo_for(rasters, &batch_bbox, halo_m));
 
         let mut tiles = Vec::with_capacity((batch_n * batch_n) as usize);

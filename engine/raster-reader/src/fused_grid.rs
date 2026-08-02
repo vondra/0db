@@ -51,6 +51,51 @@ impl FusedGrid {
         }
     }
 
+    /// Exact grid dimensions `build` will allocate for this bbox — the ONE
+    /// sizing computation, shared with byte-budget estimation (noise-gpu's
+    /// pipeline gate reserves a block's bytes BEFORE building it; an estimate
+    /// derived anywhere else would drift from the real allocation).
+    ///
+    /// Snap origin to the 1/3600° DEM pixel lattice (integer-lattice
+    /// arithmetic avoids float edge slop). Without this, `build` samples
+    /// DEM at sub-cell-shifted positions, introducing a persistent
+    /// half-cell phase error that `lookup_fused` / `pixel` cannot correct.
+    ///
+    /// Margin sized to cover `building_enclosure`'s metric 3×3 probe
+    /// (ENCLOSURE_RADIUS_M = 75 m) plus the `pixel()` nearest-neighbour
+    /// half-cell rounding. Probe footprint in DEM cells (~30.7 m):
+    /// lat ≈ 2.4 cells; lon ≈ 2.4/cos(lat), reaching ~7.1 cells at
+    /// 70°N. 8 cells stays safe through ~71°N (cos(lat) ≥ 0.32) —
+    /// covers every populated Arctic city; above that the probe
+    /// clamps to edge pixels exactly like the pre-fix code did.
+    pub fn grid_dims(
+        lat_min: f64,
+        lat_max: f64,
+        lon_min: f64,
+        lon_max: f64,
+    ) -> (usize, usize, f64, f64) {
+        let cell_deg = 1.0 / 3600.0;
+        let inv_cell_deg = 3600.0;
+        const MARGIN_CELLS: i32 = 8;
+        let lat_lo_i = (lat_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
+        let lon_lo_i = (lon_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
+        let lat_hi_i = (lat_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
+        let lon_hi_i = (lon_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
+        let rows = ((lat_hi_i - lat_lo_i + 1).max(2)) as usize;
+        let cols = ((lon_hi_i - lon_lo_i + 1).max(2)) as usize;
+        (
+            rows,
+            cols,
+            lat_lo_i as f64 * cell_deg,
+            lon_lo_i as f64 * cell_deg,
+        )
+    }
+
+    /// Heap bytes owned by this grid (the `FusedPixel` buffer).
+    pub fn heap_bytes(&self) -> u64 {
+        (self.data.capacity() * std::mem::size_of::<FusedPixel>()) as u64
+    }
+
     /// Build from RealRasters, cropping to bbox. ~0.2-0.5s for typical hex.
     pub fn build(
         rasters: &RealRasters,
@@ -61,28 +106,7 @@ impl FusedGrid {
     ) -> Self {
         let cell_deg = 1.0 / 3600.0;
         let inv_cell_deg = 3600.0;
-
-        // Snap origin to the 1/3600° DEM pixel lattice (integer-lattice
-        // arithmetic avoids float edge slop). Without this, `build` samples
-        // DEM at sub-cell-shifted positions, introducing a persistent
-        // half-cell phase error that `lookup_fused` / `pixel` cannot correct.
-        //
-        // Margin sized to cover `building_enclosure`'s metric 3×3 probe
-        // (ENCLOSURE_RADIUS_M = 75 m) plus the `pixel()` nearest-neighbour
-        // half-cell rounding. Probe footprint in DEM cells (~30.7 m):
-        // lat ≈ 2.4 cells; lon ≈ 2.4/cos(lat), reaching ~7.1 cells at
-        // 70°N. 8 cells stays safe through ~71°N (cos(lat) ≥ 0.32) —
-        // covers every populated Arctic city; above that the probe
-        // clamps to edge pixels exactly like the pre-fix code did.
-        const MARGIN_CELLS: i32 = 8;
-        let lat_lo_i = (lat_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
-        let lon_lo_i = (lon_min * inv_cell_deg).floor() as i32 - MARGIN_CELLS;
-        let lat_hi_i = (lat_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
-        let lon_hi_i = (lon_max * inv_cell_deg).ceil() as i32 + MARGIN_CELLS;
-        let lat_lo = lat_lo_i as f64 * cell_deg;
-        let lon_lo = lon_lo_i as f64 * cell_deg;
-        let rows = ((lat_hi_i - lat_lo_i + 1).max(2)) as usize;
-        let cols = ((lon_hi_i - lon_lo_i + 1).max(2)) as usize;
+        let (rows, cols, lat_lo, lon_lo) = Self::grid_dims(lat_min, lat_max, lon_min, lon_max);
 
         let mut data = vec![FusedPixel::default(); rows * cols];
 
