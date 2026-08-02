@@ -250,7 +250,7 @@ pub fn wkb_area_grid_points(
 }
 
 /// One parsed WKB sub-polygon: outer ring + inner rings (holes), each `(lat, lon)`.
-pub(crate) type WkbPoly = (Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>);
+pub type WkbPoly = (Vec<(f64, f64)>, Vec<Vec<(f64, f64)>>);
 
 /// Parse a WKB-hex Polygon (type 3) or MultiPolygon (type 6) into ALL its
 /// sub-polygons, each `(outer ring, holes)`. Empty vec on invalid/unsupported WKB.
@@ -279,7 +279,9 @@ pub(crate) fn parse_wkb_polygons(wkb_hex: &str) -> Vec<WkbPoly> {
 /// [`parse_wkb_polygons`] over raw WKB bytes — the obstacle store carries WKB
 /// unencoded (Overture parquet passthrough), so the vector-obstacle loaders
 /// skip the hex round-trip.
-pub(crate) fn parse_wkb_polygons_bytes(bytes: &[u8]) -> Vec<WkbPoly> {
+// pub (was pub(crate)): tile-painter's low-profile height cap measures the
+// outer-ring area with the SAME parser the obstacle builder consumes.
+pub fn parse_wkb_polygons_bytes(bytes: &[u8]) -> Vec<WkbPoly> {
     if bytes.len() < 9 {
         return Vec::new();
     }

@@ -26,7 +26,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use arrow::array::{Array, BinaryArray, Float32Array};
+use arrow::array::{Array, BinaryArray, Float32Array, Float64Array, UInt8Array};
 use arrow::ipc::reader::FileReader;
 use h3o::{CellIndex, LatLng, Resolution};
 use noise_compute::propagation::obstacle_index::{ObstacleIndex, ObstacleKind, ObstacleSet};
@@ -136,7 +136,8 @@ pub fn load_obstacle_set(
                 return None;
             }
         };
-        match cell_index(c, &dir) {
+        let buildings_arrow = h3r4_dir.map(|h| h.join(c.to_string()).join("buildings.arrow"));
+        match cell_index(c, &dir, buildings_arrow.as_deref()) {
             Ok(idx) => indexes.push(idx),
             Err(e) => {
                 eprintln!("obstacle_store: {e} — falling back to raster for this query");
@@ -154,7 +155,11 @@ pub fn load_obstacle_set(
 
 /// Cached per-cell index. Build errors are not cached; successful builds are
 /// immutable and shared.
-fn cell_index(cell: CellIndex, dir: &Path) -> Result<Arc<ObstacleIndex>, String> {
+fn cell_index(
+    cell: CellIndex,
+    dir: &Path,
+    buildings_arrow: Option<&Path>,
+) -> Result<Arc<ObstacleIndex>, String> {
     let cache = CELL_CACHE.get_or_init(|| {
         Mutex::new(CellCache {
             map: HashMap::new(),
@@ -171,7 +176,7 @@ fn cell_index(cell: CellIndex, dir: &Path) -> Result<Arc<ObstacleIndex>, String>
         }
     }
 
-    let built = Arc::new(build_cell_index(cell, dir)?);
+    let built = Arc::new(build_cell_index(cell, dir, buildings_arrow)?);
     let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
     c.stamp += 1;
     let stamp = c.stamp;
@@ -184,13 +189,145 @@ fn cell_index(cell: CellIndex, dir: &Path) -> Result<Arc<ObstacleIndex>, String>
     Ok(built)
 }
 
+/// LOW-PROFILE height cap — LOCKSTEP PORT of tile-painter's
+/// `source_loader_obstacle::LowProfileLookup` (2026-08-02 Dobříš garage
+/// colony: Overture rows without a mapped height defaulted to 8 m even for
+/// garage/carport/shed rows that stand ~3 m; OSM buildings.arrow knows the
+/// class, so a defaulted footprint matching a low-class OSM building at the
+/// same centroid is capped at 3 m). The popup MUST apply the identical rule
+/// or popup ≠ tiles at every capped footprint. Keep the constants and the
+/// match rule in lockstep with tile-painter; extracting one shared
+/// obstacle-io crate is the named follow-up (the two crates are deliberately
+/// independent today).
+/// (lat, lon, area_m2) rows bucketed by the ~55 m spatial-hash key.
+type LowProfileBuckets = std::collections::HashMap<(i32, i32), Vec<(f64, f64, f32)>>;
+
+struct LowProfileLookup {
+    buckets: LowProfileBuckets,
+}
+
+impl LowProfileLookup {
+    const GRID: f64 = 2000.0;
+    const MATCH_M: f64 = 15.0;
+    const AREA_RATIO: (f32, f32) = (0.4, 2.5);
+    const LOW_HEIGHT_M: f32 = 3.0;
+    const LOW_CLASSES: [u8; 2] = [7, noise_compute::emission::settlement::SILENT];
+
+    fn load(buildings_arrow: Option<&Path>) -> Self {
+        let empty = Self {
+            buckets: HashMap::new(),
+        };
+        let Some(path) = buildings_arrow else {
+            return empty;
+        };
+        let Ok(bytes) = std::fs::read(path) else {
+            return empty;
+        };
+        let Ok(reader) = FileReader::try_new(Cursor::new(bytes), None) else {
+            return empty;
+        };
+        let mut buckets: LowProfileBuckets = Default::default();
+        for batch in reader {
+            let Ok(batch) = batch else { return empty };
+            let (Some(lats), Some(lons), Some(types), Some(areas)) = (
+                batch
+                    .column_by_name("centroid_lat")
+                    .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                batch
+                    .column_by_name("centroid_lon")
+                    .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                batch
+                    .column_by_name("building_type")
+                    .and_then(|c| c.as_any().downcast_ref::<UInt8Array>()),
+                batch
+                    .column_by_name("area_m2")
+                    .and_then(|c| c.as_any().downcast_ref::<Float32Array>()),
+            ) else {
+                return empty; // older schema → no capping, never an error
+            };
+            for i in 0..batch.num_rows() {
+                if lats.is_null(i) || lons.is_null(i) || types.is_null(i) || areas.is_null(i) {
+                    continue;
+                }
+                if !Self::LOW_CLASSES.contains(&types.value(i)) {
+                    continue;
+                }
+                let (lat, lon) = (lats.value(i), lons.value(i));
+                let key = (
+                    (lat * Self::GRID).floor() as i32,
+                    (lon * Self::GRID).floor() as i32,
+                );
+                buckets
+                    .entry(key)
+                    .or_default()
+                    .push((lat, lon, areas.value(i)));
+            }
+        }
+        Self { buckets }
+    }
+
+    fn capped_height(&self, height_m: f32, tier: u8, lat: f64, lon: f64, area_m2: f32) -> f32 {
+        if tier != 2 || height_m <= Self::LOW_HEIGHT_M || self.buckets.is_empty() {
+            return height_m;
+        }
+        let key_lat = (lat * Self::GRID).floor() as i32;
+        let key_lon = (lon * Self::GRID).floor() as i32;
+        let m_per_deg_lon = 111_320.0 * lat.to_radians().cos().max(0.1);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let Some(rows) = self.buckets.get(&(key_lat + dy, key_lon + dx)) else {
+                    continue;
+                };
+                for &(blat, blon, barea) in rows {
+                    let dm_lat = (blat - lat) * 111_320.0;
+                    let dm_lon = (blon - lon) * m_per_deg_lon;
+                    if dm_lat * dm_lat + dm_lon * dm_lon > Self::MATCH_M * Self::MATCH_M {
+                        continue;
+                    }
+                    let ratio = if barea > 0.0 {
+                        area_m2 / barea
+                    } else {
+                        f32::MAX
+                    };
+                    if ratio >= Self::AREA_RATIO.0 && ratio <= Self::AREA_RATIO.1 {
+                        return Self::LOW_HEIGHT_M;
+                    }
+                }
+            }
+        }
+        height_m
+    }
+}
+
+/// Outer-ring area (m²) — lockstep with tile-painter's `outer_ring_area_m2`.
+fn outer_ring_area_m2(wkb: &[u8]) -> f32 {
+    let mut total = 0.0f64;
+    for (outer, _holes) in noise_compute::wkb::parse_wkb_polygons_bytes(wkb) {
+        if outer.len() < 4 {
+            continue;
+        }
+        let m_lon = 111_320.0 * outer[0].0.to_radians().cos().max(0.1);
+        let mut acc = 0.0f64;
+        for w in outer.windows(2) {
+            acc += w[0].1 * m_lon * (w[1].0 * 111_320.0) - w[1].1 * m_lon * (w[0].0 * 111_320.0);
+        }
+        total += (acc * 0.5).abs();
+    }
+    total as f32
+}
+
 /// Build one cell's index from its sorted shards. The index origin is the
 /// CELL CENTRE (not the query point) so the cache entry is query-independent;
 /// crossings project the ray per call, so mixed origins across a set are fine.
-fn build_cell_index(cell: CellIndex, dir: &Path) -> Result<ObstacleIndex, String> {
+fn build_cell_index(
+    cell: CellIndex,
+    dir: &Path,
+    buildings_arrow: Option<&Path>,
+) -> Result<ObstacleIndex, String> {
     let centre = LatLng::from(cell);
     let mut builder = ObstacleIndex::builder(centre.lat(), centre.lng());
     let mut next_id: u32 = 0;
+    let low_profile = LowProfileLookup::load(buildings_arrow);
     let shards = shard_paths(dir)?;
     if shards.is_empty() {
         return Err(format!("shard dir emptied under us: {}", dir.display()));
@@ -209,16 +346,32 @@ fn build_cell_index(cell: CellIndex, dir: &Path) -> Result<ObstacleIndex, String
                 .column_by_name("height_m")
                 .and_then(|c| c.as_any().downcast_ref::<Float32Array>())
                 .ok_or_else(|| format!("{}: missing height_m", path.display()))?;
+            let tiers = batch
+                .column_by_name("height_tier")
+                .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+            let clats = batch
+                .column_by_name("centroid_lat")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+            let clons = batch
+                .column_by_name("centroid_lon")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
             for i in 0..batch.num_rows() {
                 if wkb.is_null(i) || heights.is_null(i) {
                     return Err(format!("{}: null row {i}", path.display()));
                 }
-                builder.add_polygon_wkb(
-                    wkb.value(i),
-                    heights.value(i),
-                    ObstacleKind::Building,
-                    next_id,
-                );
+                let mut height = heights.value(i);
+                if let (Some(tiers), Some(clats), Some(clons)) = (tiers, clats, clons) {
+                    if !tiers.is_null(i) && !clats.is_null(i) && !clons.is_null(i) {
+                        height = low_profile.capped_height(
+                            height,
+                            tiers.value(i),
+                            clats.value(i),
+                            clons.value(i),
+                            outer_ring_area_m2(wkb.value(i)),
+                        );
+                    }
+                }
+                builder.add_polygon_wkb(wkb.value(i), height, ObstacleKind::Building, next_id);
                 next_id = next_id.wrapping_add(1);
             }
         }

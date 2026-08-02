@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use arrow::array::{Array, BinaryArray, Float32Array};
+use arrow::array::{Array, BinaryArray, Float32Array, Float64Array, UInt8Array};
 use arrow::ipc::reader::FileReader;
 use h3o::{CellIndex, LatLng};
 use noise_compute::propagation::obstacle_index::{
@@ -79,7 +79,8 @@ impl ObstacleData {
                 );
                 return Ok(Self::off());
             };
-            indexes.push(Arc::new(build_cell_index(cell, &dir)?));
+            let low_profile = LowProfileLookup::load(h3r4_dir, cell)?;
+            indexes.push(Arc::new(build_cell_index(cell, &dir, &low_profile)?));
         }
         let set = ObstacleSet { indexes };
         if set.edge_count() == 0 {
@@ -114,6 +115,131 @@ pub fn bake_tile_vector_rx_refl(
             tile.rx_refl_db[py * TILE_PX + px] =
                 enclosure_db(set, lat, tile.rx_lon[px], ENCLOSURE_RADIUS_M) as f32;
         }
+    }
+}
+
+/// LOW-PROFILE height cap (2026-08-02, Dobříš garage-colony finding): the
+/// Overture obstacle rows carry no building class, so a footprint with no
+/// mapped height defaulted to 8 m (`height_tier == 2`) even when it is a
+/// garage / carport / shed / greenhouse row that really stands ~2.5–3 m —
+/// hundreds of phantom 8 m walls in a 200 m grid over-screen entire
+/// neighbourhoods. OSM (via this cell's `buildings.arrow`) DOES know the
+/// class; a defaulted obstacle whose centroid sits within [`Self::MATCH_M`]
+/// of a low-profile OSM building with a comparable footprint area is capped
+/// at [`Self::LOW_HEIGHT_M`] (= one floor, the same constant family as the
+/// ingest ladder). Applies at LOAD time so the whole world heals without
+/// re-staging the 350 GB obstacle store; deterministic (fixed grid, sorted
+/// candidates), and it changes painted output — the OUTPUT_VER bump rides
+/// the same commit.
+/// (lat, lon, area_m2) rows bucketed by the ~55 m spatial-hash key.
+type LowProfileBuckets = std::collections::HashMap<(i32, i32), Vec<(f64, f64, f32)>>;
+
+struct LowProfileLookup {
+    /// ~55 m spatial hash over (lat, lon) → (centroid, area_m2) of low-class
+    /// OSM buildings; empty when the cell has no `buildings.arrow` (ML-only
+    /// coverage) — then nothing is capped, exactly the pre-fix behavior.
+    buckets: LowProfileBuckets,
+}
+
+impl LowProfileLookup {
+    const GRID: f64 = 2000.0; // 1/2000° ≈ 55 m bucket edge
+    const MATCH_M: f64 = 15.0;
+    const AREA_RATIO: (f32, f32) = (0.4, 2.5);
+    const LOW_HEIGHT_M: f32 = 3.0; // = ingest FLOOR_HEIGHT (one floor)
+    /// settlement classes that are structurally low: 7 = garage/carport/
+    /// parking, SILENT (10) = shed/roof/hut/greenhouse/container/… (the
+    /// emission §C′ tail — also the structurally-low tail).
+    const LOW_CLASSES: [u8; 2] = [7, noise_compute::emission::settlement::SILENT];
+
+    fn load(h3r4_dir: &Path, cell: CellIndex) -> Result<Self> {
+        let path = h3r4_dir.join(cell.to_string()).join("buildings.arrow");
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    buckets: Default::default(),
+                })
+            }
+            Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+        };
+        let reader = FileReader::try_new(Cursor::new(bytes), None)
+            .with_context(|| format!("arrow open {}", path.display()))?;
+        let mut buckets: LowProfileBuckets = Default::default();
+        for batch in reader {
+            let batch = batch.with_context(|| format!("arrow batch {}", path.display()))?;
+            let (Some(lats), Some(lons), Some(types), Some(areas)) = (
+                batch
+                    .column_by_name("centroid_lat")
+                    .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                batch
+                    .column_by_name("centroid_lon")
+                    .and_then(|c| c.as_any().downcast_ref::<Float64Array>()),
+                batch
+                    .column_by_name("building_type")
+                    .and_then(|c| c.as_any().downcast_ref::<UInt8Array>()),
+                batch
+                    .column_by_name("area_m2")
+                    .and_then(|c| c.as_any().downcast_ref::<Float32Array>()),
+            ) else {
+                // An older buildings.arrow schema simply means no capping —
+                // never a hard error for a correction layer.
+                return Ok(Self {
+                    buckets: Default::default(),
+                });
+            };
+            for i in 0..batch.num_rows() {
+                if lats.is_null(i) || lons.is_null(i) || types.is_null(i) || areas.is_null(i) {
+                    continue;
+                }
+                if !Self::LOW_CLASSES.contains(&types.value(i)) {
+                    continue;
+                }
+                let (lat, lon) = (lats.value(i), lons.value(i));
+                let key = (
+                    (lat * Self::GRID).floor() as i32,
+                    (lon * Self::GRID).floor() as i32,
+                );
+                buckets
+                    .entry(key)
+                    .or_default()
+                    .push((lat, lon, areas.value(i)));
+            }
+        }
+        Ok(Self { buckets })
+    }
+
+    /// Cap a DEFAULTED height when a matching low-profile OSM building sits
+    /// at (nearly) the same spot with a comparable footprint.
+    fn capped_height(&self, height_m: f32, tier: u8, lat: f64, lon: f64, area_m2: f32) -> f32 {
+        if tier != 2 || height_m <= Self::LOW_HEIGHT_M || self.buckets.is_empty() {
+            return height_m;
+        }
+        let key_lat = (lat * Self::GRID).floor() as i32;
+        let key_lon = (lon * Self::GRID).floor() as i32;
+        let m_per_deg_lon = 111_320.0 * lat.to_radians().cos().max(0.1);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let Some(rows) = self.buckets.get(&(key_lat + dy, key_lon + dx)) else {
+                    continue;
+                };
+                for &(blat, blon, barea) in rows {
+                    let dm_lat = (blat - lat) * 111_320.0;
+                    let dm_lon = (blon - lon) * m_per_deg_lon;
+                    if dm_lat * dm_lat + dm_lon * dm_lon > Self::MATCH_M * Self::MATCH_M {
+                        continue;
+                    }
+                    let ratio = if barea > 0.0 {
+                        area_m2 / barea
+                    } else {
+                        f32::MAX
+                    };
+                    if ratio >= Self::AREA_RATIO.0 && ratio <= Self::AREA_RATIO.1 {
+                        return Self::LOW_HEIGHT_M;
+                    }
+                }
+            }
+        }
+        height_m
     }
 }
 
@@ -166,10 +292,37 @@ fn shard_paths(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn build_cell_index(cell: CellIndex, dir: &Path) -> Result<ObstacleIndex> {
+/// Outer-ring area (m², shoelace on a local equirectangular projection) —
+/// the low-profile cap's footprint-comparability check. Uses the SAME parser
+/// the index builder consumes, so the two can never disagree on geometry.
+fn outer_ring_area_m2(wkb: &[u8]) -> f32 {
+    let mut total = 0.0f64;
+    for (outer, _holes) in noise_compute::wkb::parse_wkb_polygons_bytes(wkb) {
+        if outer.len() < 4 {
+            continue;
+        }
+        let lat0 = outer[0].0;
+        let m_lon = 111_320.0 * lat0.to_radians().cos().max(0.1);
+        let mut acc = 0.0f64;
+        for w in outer.windows(2) {
+            let (x0, y0) = ((w[0].1) * m_lon, (w[0].0) * 111_320.0);
+            let (x1, y1) = ((w[1].1) * m_lon, (w[1].0) * 111_320.0);
+            acc += x0 * y1 - x1 * y0;
+        }
+        total += (acc * 0.5).abs();
+    }
+    total as f32
+}
+
+fn build_cell_index(
+    cell: CellIndex,
+    dir: &Path,
+    low_profile: &LowProfileLookup,
+) -> Result<ObstacleIndex> {
     let centre = LatLng::from(cell);
     let mut builder = ObstacleIndex::builder(centre.lat(), centre.lng());
     let mut next_id: u32 = 0;
+    let mut capped = 0usize;
     let shards = shard_paths(dir)?;
     if shards.is_empty() {
         bail!("shard dir emptied under us: {}", dir.display());
@@ -190,19 +343,44 @@ fn build_cell_index(cell: CellIndex, dir: &Path) -> Result<ObstacleIndex> {
             ) else {
                 bail!("{}: missing polygon_wkb/height_m", path.display());
             };
+            // Older staging shards lack tier/centroid — then nothing is
+            // capped (tier unknowable), matching pre-fix behavior.
+            let tiers = batch
+                .column_by_name("height_tier")
+                .and_then(|c| c.as_any().downcast_ref::<UInt8Array>());
+            let clats = batch
+                .column_by_name("centroid_lat")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
+            let clons = batch
+                .column_by_name("centroid_lon")
+                .and_then(|c| c.as_any().downcast_ref::<Float64Array>());
             for i in 0..batch.num_rows() {
                 if wkb.is_null(i) || heights.is_null(i) {
                     bail!("{}: null row {i}", path.display());
                 }
-                builder.add_polygon_wkb(
-                    wkb.value(i),
-                    heights.value(i),
-                    ObstacleKind::Building,
-                    next_id,
-                );
+                let mut height = heights.value(i);
+                if let (Some(tiers), Some(clats), Some(clons)) = (tiers, clats, clons) {
+                    if !tiers.is_null(i) && !clats.is_null(i) && !clons.is_null(i) {
+                        let capped_h = low_profile.capped_height(
+                            height,
+                            tiers.value(i),
+                            clats.value(i),
+                            clons.value(i),
+                            outer_ring_area_m2(wkb.value(i)),
+                        );
+                        if capped_h < height {
+                            capped += 1;
+                        }
+                        height = capped_h;
+                    }
+                }
+                builder.add_polygon_wkb(wkb.value(i), height, ObstacleKind::Building, next_id);
                 next_id = next_id.wrapping_add(1);
             }
         }
+    }
+    if capped > 0 {
+        eprintln!("[obstacles] {cell}: {capped} defaulted heights capped to low-profile 3 m");
     }
     Ok(builder.build())
 }
@@ -251,6 +429,41 @@ mod tests {
     /// full ring loads; a missing halo neighbour → raster-off strict but
     /// loads under partial; a missing REGION cell → raster-off EVEN under
     /// partial (the popup's query-cell rule); a corrupt shard → hard Err.
+    /// The low-profile cap's decision matrix (2026-08-02 garage-colony fix):
+    /// a DEFAULTED (tier 2) height caps to 3 m only when a low-class OSM
+    /// building matches by centroid AND comparable area; mapped heights
+    /// (tier 0/1), far buildings, high classes and wild area ratios all keep
+    /// the original height.
+    #[test]
+    fn low_profile_cap_matrix() {
+        let mut buckets: LowProfileBuckets = Default::default();
+        let (lat, lon) = (49.7778, 14.1636);
+        let key = (
+            (lat * LowProfileLookup::GRID).floor() as i32,
+            (lon * LowProfileLookup::GRID).floor() as i32,
+        );
+        buckets.insert(key, vec![(lat, lon, 22.0)]); // one 22 m² garage
+        let lookup = LowProfileLookup { buckets };
+
+        // Defaulted 8 m footprint on the garage → capped to 3 m.
+        assert_eq!(lookup.capped_height(8.0, 2, lat, lon, 24.0), 3.0);
+        // Mapped height (tier 0) never caps, even at the same spot.
+        assert_eq!(lookup.capped_height(8.0, 0, lat, lon, 24.0), 8.0);
+        // Floors-derived (tier 1) never caps.
+        assert_eq!(lookup.capped_height(9.0, 1, lat, lon, 24.0), 9.0);
+        // 30 m away — outside MATCH_M — keeps the default.
+        assert_eq!(lookup.capped_height(8.0, 2, lat + 0.0003, lon, 24.0), 8.0);
+        // A big hall (600 m²) over a tiny garage row is NOT comparable.
+        assert_eq!(lookup.capped_height(8.0, 2, lat, lon, 600.0), 8.0);
+        // Already low stays untouched.
+        assert_eq!(lookup.capped_height(2.5, 2, lat, lon, 24.0), 2.5);
+        // Empty lookup (no buildings.arrow) = pre-fix behavior.
+        let empty = LowProfileLookup {
+            buckets: Default::default(),
+        };
+        assert_eq!(empty.capped_height(8.0, 2, lat, lon, 24.0), 8.0);
+    }
+
     #[test]
     fn loading_policy_matrix() {
         let tmp = std::env::temp_dir().join(format!("qm-obst-pipe-test-{}", std::process::id()));
