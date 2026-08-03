@@ -3,28 +3,38 @@
   "layers": {
     "road": {
       "arrows": [
-        "roads.arrow"
+        "roads.arrow",
+        "obstacles.arrow",
+        "barriers.arrow"
       ]
     },
     "rail": {
       "arrows": [
-        "railways.arrow"
+        "railways.arrow",
+        "obstacles.arrow",
+        "barriers.arrow"
       ]
     },
     "industrial": {
       "arrows": [
-        "industrial.arrow"
+        "industrial.arrow",
+        "obstacles.arrow",
+        "barriers.arrow"
       ]
     },
     "building": {
       "arrows": [
         "buildings.arrow",
-        "leisure.arrow"
+        "leisure.arrow",
+        "obstacles.arrow",
+        "barriers.arrow"
       ]
     },
     "aircraft-ground": {
       "arrows": [
-        "airport_traffic.arrow"
+        "airport_traffic.arrow",
+        "obstacles.arrow",
+        "barriers.arrow"
       ]
     },
     "aircraft-airborne": {
