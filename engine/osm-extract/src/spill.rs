@@ -191,7 +191,7 @@ impl Spiller {
                     w,
                     "\t{}\t{}",
                     tags.get("height")
-                        .and_then(|s| s.parse::<f32>().ok())
+                        .and_then(|s| parse_height(s))
                         .unwrap_or(3.0),
                     classify::barrier_material_type(tags.get("material").map(|s| s.as_str())),
                 );
@@ -709,11 +709,13 @@ fn site_subtype_from_tags(tags: &Tags) -> u8 {
     0 // unknown — will use default 93 dB
 }
 
+/// OSM canonical form is a bare number or "N m" (metres). Strip at most ONE
+/// metre suffix — `trim_end_matches` would strip repeatedly and turn
+/// "2000mm" into 2000 metres; unsupported units now fail the parse and fall
+/// back to the caller's default instead of misparsing.
 fn parse_height(val: &str) -> Option<f32> {
-    val.trim_end_matches(" m")
-        .trim_end_matches("m")
-        .parse()
-        .ok()
+    let val = val.trim_end();
+    val.strip_suffix('m').unwrap_or(val).trim_end().parse().ok()
 }
 
 fn parse_power_kw(val: Option<&str>) -> f32 {
@@ -833,5 +835,21 @@ mod settlement_class_tests {
         t.insert("building".into(), "yes".into());
         t.insert("amenity".into(), "hospital".into());
         assert_eq!(building_type_from_tags(&t), 4);
+    }
+
+    // OSM height tags commonly carry a unit suffix ("4 m"); a bare f32 parse
+    // silently discarded those and fell back to the 3.0 default (found on the
+    // Voznice barrier audit 2026-08-03 — buildings already stripped the unit,
+    // barriers did not).
+    #[test]
+    fn parse_height_strips_one_metre_suffix() {
+        assert_eq!(parse_height("4 m"), Some(4.0));
+        assert_eq!(parse_height("4m"), Some(4.0));
+        assert_eq!(parse_height("4.5"), Some(4.5));
+        assert_eq!(parse_height("tall"), None);
+        // One suffix only: millimetre tags must NOT become 2000-metre walls.
+        assert_eq!(parse_height("2000mm"), None);
+        assert_eq!(parse_height("6 ft"), None);
+        assert_eq!(parse_height("10 m "), Some(10.0));
     }
 }
